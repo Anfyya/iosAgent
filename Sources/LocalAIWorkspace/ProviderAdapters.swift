@@ -284,7 +284,7 @@ private func firstInt(in object: [String: Any], preferredPath: String?, fallback
             return value
         }
         if let double = value(at: path, in: object) as? Double {
-            return Int(double)
+            return Int(double.rounded())
         }
     }
     return nil

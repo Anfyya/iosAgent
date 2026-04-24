@@ -485,7 +485,7 @@ private func makeProviderProfile() -> ProviderProfile {
                     enabledField: "enable_thinking",
                     depthField: "thinking_level",
                     levels: [
-                        ReasoningLevel(label: "高", value: "high")
+                        ReasoningLevel(label: "High", value: "high")
                     ]
                 ),
                 supportsCache: true,

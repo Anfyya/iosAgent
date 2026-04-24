@@ -237,10 +237,10 @@ public struct PatchEngine: Sendable {
             })
         }
         guard touchesProtectedPath else { return }
-        guard options.allowProtectedPaths, options.confirmedByUser else {
-            throw PatchEngineError.protectedPathRequiresConfirmation(paths.joined(separator: ", "))
-        }
-        guard let permission = options.permissionDecision?.permission, permission == .ask || permission == .review else {
+        guard options.allowProtectedPaths,
+              options.confirmedByUser,
+              let permission = options.permissionDecision?.permission,
+              permission == .ask || permission == .review else {
             throw PatchEngineError.protectedPathRequiresConfirmation(paths.joined(separator: ", "))
         }
     }
