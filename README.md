@@ -1,37 +1,72 @@
 # LocalAIWorkspace
 
-LocalAIWorkspace 是一个 **本地优先的 iOS 26.4 SwiftUI AI 工程工作台** MVP 骨架。
+LocalAIWorkspace 是一个本地优先的 iOS SwiftUI AI 工程工作台。当前仓库包含：
 
-## 当前交付内容
+- SwiftUI App 壳与集中封装的 `LiquidGlassUI.swift`
+- 本地 workspace 文件边界与文本工具链
+- OpenAI-compatible 请求/响应适配与真实 `AIClient`
+- 持久化 patch queue / agent run 核心逻辑
+- patch snapshot / restore
+- context prefix / cache usage 记录
+- GitHub Actions 的 Swift Package 测试、XcodeGen 校验、iOS Simulator 构建、可选签名归档
 
-- SwiftUI App Shell：Projects / Workspace / Chat / Patch Review / Context / Cache / Settings
-- `LiquidGlassUI.swift`：集中封装 Liquid Glass，自定义玻璃仅用于导航/操作层
-- `WorkspaceFS`：限制访问当前 workspace、阻止路径穿越、保护敏感路径
-- Provider Profile 系统：支持 OpenAI-compatible profile + schema-driven model metadata
-- Tool Call 基础设施：`list_files` / `read_file` / `search_in_files` / `ask_question` / `propose_patch` / `get_context_status`
-- `PermissionManager`：工具级权限 + 危险路径硬规则
-- `PatchEngine`：基于 `baseHash` 的 patch proposal 应用、snapshot 备份、创建/删除/重命名支持
-- `ContextEngine`：固定前缀块顺序、稳定哈希、repo/file summary 构建
-- `CacheEngine`：缓存命中统计与 miss reason 追踪
-- GitHub Actions：`macos-26` + `Xcode_26.4` + XcodeGen 生成工程 + simulator build + signed archive/export 条件流程
+## 当前已实现的核心能力
 
-## 目录结构
+### 本地优先架构
 
-- `App/`：SwiftUI App 壳层与 Liquid Glass UI 封装
-- `Sources/LocalAIWorkspace/`：MVP 核心模型与服务
-- `Tests/LocalAIWorkspaceTests/`：Linux 环境可运行的核心单元测试
-- `project.yml`：XcodeGen 配置，CI 上生成 iOS App 工程
-- `.github/workflows/build-ios.yml`：iOS 26.4 CI 构建工作流
+- `WorkspaceFS` 只允许访问当前 workspace 根目录
+- 拒绝绝对路径、`..` 路径穿越、符号链接逃逸
+- protected path 默认不可读写
+- 二进制文件与超大文件不会被内联进工具结果
 
-## Liquid Glass 说明
+### AI Provider
 
-本仓库将所有自定义 Liquid Glass 代码集中在 `App/LiquidGlassUI.swift`：
+- `ProviderProfile` 支持 OpenAI-compatible profile
+- 请求支持：
+  - `model`
+  - `messages`
+  - `temperature`
+  - `max_tokens`
+  - `stream`
+  - `tools`
+  - `tool_choice`
+  - reasoning 字段映射
+  - web search 字段映射
+  - extra headers / extra body parameters
+- 响应支持解析：
+  - `choices[0].message.content`
+  - `reasoning_content`
+  - `tool_calls`
+  - `usage.prompt_tokens`
+  - `usage.completion_tokens`
+  - `usage.total_tokens`
+  - `usage.prompt_tokens_details.cached_tokens`
+  - `usage.cached_tokens`
+  - `usage.prompt_cache_hit_tokens`
+  - `usage.prompt_cache_miss_tokens`
 
-- 优先使用系统 `TabView` / `NavigationStack`
-- 自定义浮层在 `if #available(iOS 26.0, *)` 下使用 `GlassEffectContainer` 与 `glassEffect(_:in:)`
-- 当开启 Reduce Transparency 或运行在更低版本时，回退到系统 Material
+### Agent / Patch
 
-> 当前开发环境无法直接运行 Xcode 26.4 SDK 校验，因此将官方 Liquid Glass 调用集中封装在单文件中，方便在 macOS + Xcode 26.4 上验证后微调签名或参数，而不污染业务层。
+- `AgentLoop` 支持多轮 tool loop
+- `ask_question` 会阻塞 run，等待用户恢复
+- `propose_patch` 会写入真实 `PatchStore`
+- `PatchEngine` 应用 patch 前会自动创建 snapshot
+- `PatchEngine.restore` 可用 snapshot 回滚
+- protected path patch 需要显式确认
+
+### Context / Cache
+
+- `ContextEngine` 保持稳定前缀块顺序
+- `CacheEngine` 接收真实 usage 数据
+- prefix hash / repo snapshot hash / tool schema hash 会进入 cache record
+
+## 仓库结构
+
+- `App/`：SwiftUI App 壳与 Liquid Glass UI
+- `Sources/LocalAIWorkspace/`：workspace、AI、agent、patch、context、cache 核心逻辑
+- `Tests/LocalAIWorkspaceTests/`：Swift Package 单元测试
+- `project.yml`：XcodeGen 配置
+- `.github/workflows/build-ios.yml`：CI
 
 ## 本地开发
 
@@ -43,46 +78,41 @@ swift test
 
 ### 生成 Xcode 工程
 
-需要在 macOS + Xcode 26.4 环境：
-
 ```bash
 brew install xcodegen
 xcodegen generate
 open LocalAIWorkspace.xcodeproj
 ```
 
-## Provider Profile 设计
+## CI
 
-Provider Profile / Model Profile 采用 schema-driven 方式，不把某一家 API 的字段名写死在 UI：
+`build-ios` workflow 当前会执行：
 
-- `apiStyle`
-- `auth`
-- `requestFieldMapping`
-- `responseFieldMapping`
-- `usageFieldMapping`
-- `ReasoningMapping`
-- `CacheStrategy`
-- `extraHeaders`
-- `extraBodyParameters`
+1. `swift test`
+2. `xcodegen generate`
+3. iOS Simulator build
+4. 上传 `xcresult` / DerivedData
+5. 当签名 secrets 完整时再执行 archive / export IPA
 
-## 签名与 IPA 构建
+Simulator 设备会在 runner 上动态选择常见可用机型，不再写死 `iPhone 17`。
 
-工作流包含两个阶段：
+## 安全边界
 
-1. **Simulator Build**：始终执行，验证工程至少可以在无签名环境完成 iOS Simulator 编译。
-2. **Signed Archive / Export IPA**：仅当以下 Secrets 全部存在时执行：
-   - `IOS_CERTIFICATE_P12_BASE64`
-   - `IOS_CERTIFICATE_PASSWORD`
-   - `IOS_PROVISIONING_PROFILE_BASE64`
-   - `IOS_KEYCHAIN_PASSWORD`
-   - `IOS_TEAM_ID`
+- AI 不应直接写文件；必须通过 patch proposal
+- AI 不应访问 workspace 外路径
+- `.mobiledev` / credentials / workflow 等 protected path 默认需要确认
+- API Key 不应写入普通配置文件
+- 删除、重命名、push、触发 workflow 都应经过显式确认
 
-如未提供签名 Secrets，CI 会明确只产出 simulator build artifact，不假装导出可安装 IPA。
+## 已知限制
 
-## 后续优先级
+- 当前 App UI 仍需继续把这些核心服务完整接到真实 iPhone 交互流程
+- 目前只实现了 OpenAI-compatible `AIClient`
+- GitHub sync / Actions viewer 的 App 内 UI 还没有完全接通
+- Provider Profile 编辑器、Keychain UI、workspace 导入/管理 UI 仍需继续补齐
 
-1. 真实本地 workspace 管理与导入 zip
-2. Chat -> tool loop -> patch queue 的状态持久化
-3. Provider Profile 编辑器 UI
-4. GitHub link / branch / PR / Actions logs / artifact viewer
-5. SwiftData 持久化 context/cache/patch history
+## Liquid Glass 约束
+
+- 自定义 Liquid Glass API 继续集中在 `App/LiquidGlassUI.swift`
+- 仅用于导航/操作层，不覆盖代码区主体
+- 低版本或可访问性场景回退到系统 Material

@@ -2,8 +2,11 @@ import Foundation
 
 public enum WorkspaceFSError: Error, LocalizedError {
     case invalidRoot
+    case emptyPath
+    case absolutePath
     case pathTraversal
     case outsideWorkspace
+    case symlinkEscape(String)
     case protectedPath(String)
     case binaryFile(String)
     case fileTooLarge(String)
@@ -13,10 +16,16 @@ public enum WorkspaceFSError: Error, LocalizedError {
         switch self {
         case .invalidRoot:
             return "Workspace root is invalid."
+        case .emptyPath:
+            return "Empty paths are not allowed for this operation."
+        case .absolutePath:
+            return "Absolute paths are not allowed."
         case .pathTraversal:
             return "Path traversal is not allowed."
         case .outsideWorkspace:
             return "Resolved path points outside the workspace."
+        case let .symlinkEscape(path):
+            return "Symlink escapes the workspace boundary: \(path)"
         case let .protectedPath(path):
             return "Protected path requires confirmation: \(path)"
         case let .binaryFile(path):
@@ -42,19 +51,32 @@ public struct WorkspaceFS: Sendable {
         self.protectedPathPrefixes = protectedPathPrefixes
     }
 
-    public func safeURL(for path: String, requiresProtectedPathAccess: Bool = false) throws -> URL {
-        guard !path.contains("..") else { throw WorkspaceFSError.pathTraversal }
+    public func safeURL(for path: String, requiresProtectedPathAccess: Bool = false, allowWorkspaceRoot: Bool = false) throws -> URL {
+        let normalizedInput = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedInput.hasPrefix("/") else { throw WorkspaceFSError.absolutePath }
+        // Tool payloads are user/model generated, so reject backslashes up front instead of
+        // trying to interpret mixed separator styles inside the iOS workspace sandbox.
+        guard !normalizedInput.contains("\\") else { throw WorkspaceFSError.pathTraversal }
+        guard !normalizedInput.split(separator: "/").contains("..") else { throw WorkspaceFSError.pathTraversal }
 
-        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let trimmedPath = normalizedInput.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmedPath.isEmpty else {
+            if allowWorkspaceRoot {
+                return rootURL
+            }
+            throw WorkspaceFSError.emptyPath
+        }
         let candidate = rootURL.appendingPathComponent(trimmedPath).standardizedFileURL
-        guard candidate.path.hasPrefix(rootURL.path) else { throw WorkspaceFSError.outsideWorkspace }
+        guard isWithinRoot(candidate) else { throw WorkspaceFSError.outsideWorkspace }
+        let resolvedCandidate = candidate.resolvingSymlinksInPath()
+        guard isWithinRoot(resolvedCandidate) else { throw WorkspaceFSError.symlinkEscape(trimmedPath) }
 
         if !requiresProtectedPathAccess,
            protectedPathPrefixes.contains(where: { trimmedPath == $0 || trimmedPath.hasPrefix($0 + "/") }) {
             throw WorkspaceFSError.protectedPath(trimmedPath)
         }
 
-        return candidate
+        return resolvedCandidate
     }
 
     public func listFiles() throws -> [WorkspaceFileEntry] {
@@ -138,5 +160,11 @@ public struct WorkspaceFS: Sendable {
 
     private func isBinary(data: Data) -> Bool {
         data.prefix(512).contains(0)
+    }
+
+    private func isWithinRoot(_ candidate: URL) -> Bool {
+        let path = candidate.standardizedFileURL.path
+        let rootPath = rootURL.path
+        return path == rootPath || path.hasPrefix(rootPath + "/")
     }
 }

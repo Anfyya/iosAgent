@@ -17,7 +17,7 @@ public struct PermissionManager: Sendable {
             .init(toolName: "get_file_hash", permission: .automatic),
             .init(toolName: "get_context_status", permission: .automatic),
             .init(toolName: "ask_question", permission: .automatic),
-            .init(toolName: "propose_patch", permission: .automatic, maxFilesWithoutConfirmation: 3, maxChangedLinesWithoutConfirmation: 120),
+            .init(toolName: "propose_patch", permission: .review, maxFilesWithoutConfirmation: 3, maxChangedLinesWithoutConfirmation: 120),
             .init(toolName: "propose_create_file", permission: .review),
             .init(toolName: "propose_delete_file", permission: .ask),
             .init(toolName: "propose_rename_file", permission: .ask),
