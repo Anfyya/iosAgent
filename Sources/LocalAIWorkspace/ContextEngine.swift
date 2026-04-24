@@ -128,7 +128,7 @@ public struct ContextEngine: Sendable {
                 .filter { !$0.isEmpty && !$0.hasPrefix("#") }
             rules.append(contentsOf: extraRules)
         }
-        return Array(NSOrderedSet(array: rules)) as? [String] ?? rules
+        return Array(Set(rules)).sorted()
     }
 
     private func estimateTokens(in text: String) -> Int {

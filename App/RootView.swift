@@ -601,7 +601,7 @@ private struct DiffViewer: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init), id: \.self) { line in
+                ForEach(Array(diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).enumerated()), id: \.offset) { _, line in
                     Text(line)
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)

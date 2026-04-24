@@ -657,12 +657,13 @@ struct SecretStoreTests {
     @Test func providerProfileExportDoesNotContainPlaintextKey() async throws {
         var profile = makeProviderProfile()
         profile.apiKeyReference = "provider.default"
+        let plaintextKey = "super-secret"
 
         let data = try JSONEncoder().encode(profile)
         let json = String(decoding: data, as: UTF8.self)
 
         #expect(json.contains("provider.default"))
-        #expect(json.contains("super-secret") == false)
+        #expect(json.contains(plaintextKey) == false)
     }
 }
 

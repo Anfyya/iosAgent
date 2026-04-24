@@ -270,11 +270,11 @@ final class AppModel: ObservableObject {
     }
 
     func answerQuestion() async {
-        guard let run = currentRun, let profile = activeProvider else { return }
+        guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
         do {
-            let fs = try workspaceManager.workspaceFS(for: selectedWorkspace!)
+            let fs = try workspaceManager.workspaceFS(for: workspace)
             let snapshot = try contextEngine.buildContext(using: makeContextRequest(), workspaceFS: fs)
-            let loop = try makeAgentLoop(for: selectedWorkspace!)
+            let loop = try makeAgentLoop(for: workspace)
             let updated = try await loop.resume(runID: run.id, answer: questionAnswer, profile: profile, apiKey: try apiKeyForProfile(profile), contextRequest: makeContextRequest())
             questionAnswer = ""
             handle(run: updated, profile: profile, snapshot: snapshot)

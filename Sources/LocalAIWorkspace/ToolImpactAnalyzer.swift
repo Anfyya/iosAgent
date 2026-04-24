@@ -107,7 +107,7 @@ public enum ToolImpactAnalyzer {
     private static func touchesProtectedPath(in paths: [String]) -> Bool {
         paths.contains { path in
             protectedPathPrefixes.contains { prefix in
-                path == prefix || path.hasPrefix(prefix + "/") || path.localizedCaseInsensitiveContains(prefix)
+                path == prefix || path.hasPrefix(prefix + "/")
             }
         }
     }
@@ -128,6 +128,6 @@ public enum ToolImpactAnalyzer {
                 break
             }
         }
-        return Array(NSOrderedSet(array: paths)) as? [String] ?? paths
+        return Array(Set(paths)).sorted()
     }
 }
