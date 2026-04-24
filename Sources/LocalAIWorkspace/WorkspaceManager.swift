@@ -36,7 +36,6 @@ public struct WorkspaceManager: Sendable {
         mode: WorkspaceMode = .localOnly,
         activeProviderProfileID: String? = nil
     ) throws -> Workspace {
-        let root = workspaceURL(for: id)
         let files = filesURL(for: id)
         let mobiledev = mobiledevURL(for: id)
         try fileManager.createDirectory(at: files, withIntermediateDirectories: true)
@@ -56,7 +55,6 @@ public struct WorkspaceManager: Sendable {
         try writeIfMissing(url: mobiledev.appendingPathComponent("patches.json"), data: Data("[]".utf8))
         try writeIfMissing(url: mobiledev.appendingPathComponent("agent_runs.json"), data: Data("[]".utf8))
         try writeIfMissing(url: mobiledev.appendingPathComponent("cache_records.json"), data: Data("[]".utf8))
-        _ = root
         return workspace
     }
 

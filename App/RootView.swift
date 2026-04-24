@@ -601,13 +601,13 @@ private struct DiffViewer: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).enumerated()), id: \.offset) { _, line in
-                    Text(line)
+                ForEach(Array(diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).enumerated()), id: \.offset) { item in
+                    Text(item.element)
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
-                        .background(background(for: line))
+                        .background(background(for: item.element))
                 }
             }
         }

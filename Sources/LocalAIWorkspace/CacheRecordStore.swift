@@ -21,6 +21,8 @@ public struct FileCacheRecordStore: CacheRecordStore {
     }
 
     public func list(workspaceID: UUID?) throws -> [CacheRecord] {
+        // Cache records are stored in a per-workspace file, so there is nothing
+        // additional to filter in this file-backed implementation.
         _ = workspaceID
         guard FileManager.default.fileExists(atPath: storageURL.path) else { return [] }
         let data = try Data(contentsOf: storageURL)

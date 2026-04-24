@@ -89,8 +89,11 @@ public struct ContextEngine: Sendable {
             .sorted(by: { $0.path < $1.path })
             .prefix(6)
 
-        let summaries = importantFiles.compactMap { entry -> String? in
-            guard let file = try? workspaceFS.readTextFile(path: entry.path, allowProtectedPaths: true) else {
+        let summaries = try importantFiles.compactMap { entry -> String? in
+            let file: ReadFileResult
+            do {
+                file = try workspaceFS.readTextFile(path: entry.path, allowProtectedPaths: true)
+            } catch WorkspaceFSError.binaryFile, WorkspaceFSError.fileTooLarge, WorkspaceFSError.missingFile {
                 return nil
             }
             let preview = file.content
