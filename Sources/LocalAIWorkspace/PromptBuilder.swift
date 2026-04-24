@@ -13,7 +13,14 @@ public struct PromptBuilder: Sendable {
         workspace: Workspace,
         additionalUserRequirements: String = ""
     ) -> PromptBuildOutput {
-        let workspaceMetadata = "workspace=\(workspace.name) branch=\(workspace.currentBranch ?? "local") provider=\(activeProvider.name) model=\(activeModel.displayName.isEmpty ? activeModel.id : activeModel.displayName) prefixHash=\(snapshot.prefixHash)"
+        let resolvedModelName = activeModel.displayName.isEmpty ? activeModel.id : activeModel.displayName
+        let workspaceMetadata = [
+            "workspace=\(workspace.name)",
+            "branch=\(workspace.currentBranch ?? "local")",
+            "provider=\(activeProvider.name)",
+            "model=\(resolvedModelName)",
+            "prefixHash=\(snapshot.prefixHash)"
+        ].joined(separator: " ")
         let systemMessage = [
             "You are a local-first engineering workspace assistant.",
             "Security rules:",
@@ -21,7 +28,7 @@ public struct PromptBuilder: Sendable {
             "- If requirements are ambiguous or out of scope, call ask_question before proceeding.",
             "- Do not write files directly; only use propose_patch.",
             "- Deletions, renames, GitHub sync, and Actions operations require confirmation.",
-            "- Never read Keychain values, API keys, or secrets.",
+            "- Never read keychain values, API keys, or secrets.",
             "- Never access paths outside workspace/files.",
             "Tool usage:",
             "- Prefer list_files/read_file/search_in_files/get_context_status before proposing changes.",

@@ -565,7 +565,8 @@ struct RootView: View {
                                 Button("Preview Commit Summary") { Task { await model.previewCommit() } }
                                 Button("Commit & Push") {
                                     Task {
-                                        await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !["main", "master"].contains(model.remoteBranch))
+                                        let isProtectedBranch = ["main", "master"].contains(model.remoteBranch)
+                                        await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !isProtectedBranch)
                                     }
                                 }
                                 Toggle("I confirm a protected branch push", isOn: $pushProtectedBranch)
@@ -1178,14 +1179,25 @@ private func parseJSONValue(_ text: String) -> JSONValue {
           let object = try? JSONSerialization.jsonObject(with: data) else {
         return .string(text)
     }
+    return convertJSONAny(object)
+}
+
+private func convertJSONAny(_ object: Any) -> JSONValue {
     switch object {
-    case let value as String: return .string(value)
-    case let value as Int: return .integer(value)
-    case let value as Double: return .number(value)
-    case let value as Bool: return .bool(value)
-    case let value as [String: Any]: return .object(value.mapValues { parseJSONValue(String(describing: $0)) })
-    case let value as [Any]: return .array(value.map { parseJSONValue(String(describing: $0)) })
-    default: return .null
+    case let value as String:
+        return .string(value)
+    case let value as Int:
+        return .integer(value)
+    case let value as Double:
+        return .number(value)
+    case let value as Bool:
+        return .bool(value)
+    case let value as [String: Any]:
+        return .object(value.mapValues(convertJSONAny))
+    case let value as [Any]:
+        return .array(value.map(convertJSONAny))
+    default:
+        return .null
     }
 }
 

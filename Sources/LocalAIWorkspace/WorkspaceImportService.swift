@@ -204,7 +204,7 @@ public struct WorkspaceImportService: Sendable {
             let parent = preferredURL.deletingLastPathComponent()
             var counter = 2
             while true {
-                let name = ext.isEmpty ? "\(base) copy \(counter)" : "\(base) copy \(counter).\(ext)"
+                let name = ext.isEmpty ? "\(base)_copy_\(counter)" : "\(base)_copy_\(counter).\(ext)"
                 let candidate = parent.appendingPathComponent(name)
                 if !FileManager.default.fileExists(atPath: candidate.path) {
                     guard candidate.path == fs.rootURL.path || candidate.path.hasPrefix(fs.rootURL.path + "/") else {
@@ -219,7 +219,7 @@ public struct WorkspaceImportService: Sendable {
 
     private func sanitizedRelativePath(_ path: String) throws -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false, trimmed.hasPrefix("/") == false, trimmed.contains("\\") == false else {
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("/"), !trimmed.contains("\\") else {
             throw WorkspaceImportError.invalidDestinationPath(path)
         }
         let parts = trimmed.split(separator: "/").map(String.init)

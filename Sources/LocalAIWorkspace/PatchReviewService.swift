@@ -3,6 +3,7 @@ import Foundation
 public enum PatchReviewServiceError: Error, LocalizedError {
     case missingWorkspaceID(UUID)
     case missingProposal(UUID)
+    case missingSnapshot(UUID)
 
     public var errorDescription: String? {
         switch self {
@@ -10,6 +11,8 @@ public enum PatchReviewServiceError: Error, LocalizedError {
             return "Patch proposal \(id.uuidString) is missing a workspace ID."
         case let .missingProposal(id):
             return "Patch proposal not found: \(id.uuidString)"
+        case let .missingSnapshot(id):
+            return "Snapshot not found: \(id.uuidString)"
         }
     }
 }
@@ -129,7 +132,7 @@ public struct PatchReviewService: Sendable {
     @discardableResult
     public func restoreSnapshot(snapshotID: UUID, workspaceID: UUID, confirmedByUser: Bool) throws -> SnapshotRecord {
         guard let snapshot = try snapshotStore?.snapshot(id: snapshotID) else {
-            throw PatchReviewServiceError.missingProposal(snapshotID)
+            throw PatchReviewServiceError.missingSnapshot(snapshotID)
         }
         let workspace = try workspaceManager.loadWorkspace(id: workspaceID)
         let workspaceFS = try workspaceManager.workspaceFS(for: workspace)

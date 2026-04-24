@@ -569,7 +569,8 @@ final class AppModel: ObservableObject {
     func createPullRequest() async {
         guard let workspace = selectedWorkspace, let remote = githubRemoteConfig else { return }
         do {
-            let url = try await githubSyncService.createPullRequest(workspaceID: workspace.id, title: pullRequestTitle, body: pullRequestBody, head: remote.branch, base: remote.branch)
+            let baseBranch = githubRepository?.defaultBranch ?? "main"
+            let url = try await githubSyncService.createPullRequest(workspaceID: workspace.id, title: pullRequestTitle, body: pullRequestBody, head: remote.branch, base: baseBranch)
             githubStatusMessage = "Pull Request created: \(url)"
             try log(action: "pull_request_created", workspaceID: workspace.id, metadata: ["url": .string(url)])
         } catch {
@@ -587,7 +588,8 @@ final class AppModel: ObservableObject {
         do {
             let inputs = parseInputs(workflowInputsText)
             let ref = build?.ref ?? (selectedWorkflowRef.isEmpty ? (githubRemoteConfig?.branch ?? "main") : selectedWorkflowRef)
-            try await githubSyncService.dispatchWorkflow(workspaceID: workspace.id, workflowIDOrFileName: workflow, ref: ref, inputs: build?.inputs.isEmpty == false ? build!.inputs : inputs)
+            let dispatchInputs = (build?.inputs.isEmpty == false) ? (build?.inputs ?? [:]) : inputs
+            try await githubSyncService.dispatchWorkflow(workspaceID: workspace.id, workflowIDOrFileName: workflow, ref: ref, inputs: dispatchInputs)
             githubStatusMessage = "Workflow dispatched: \(workflow)"
             try log(action: "workflow_dispatched", workspaceID: workspace.id, metadata: ["workflow": .string(workflow), "ref": .string(ref)])
             await refreshGitHubData()

@@ -838,7 +838,7 @@ struct GitHubSyncServiceTests {
         let client = StubGitHubAPIClient()
         let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: client)
 
-        _ = try await service.linkRepository(workspaceID: workspace.id, owner: "Anfyya", repo: "iosAgent", branch: "main", token: "ghs_secret")
+        _ = try await service.linkRepository(workspaceID: workspace.id, owner: "testorg", repo: "sample-repo", branch: "main", token: "ghs_secret")
         let remoteData = try Data(contentsOf: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
         let remoteJSON = String(decoding: remoteData, as: UTF8.self)
 
@@ -859,7 +859,7 @@ struct GitHubSyncServiceTests {
         try secrets.save(service: GitHubSyncService.secretService, account: "github.default", value: "token")
         let client = StubGitHubAPIClient()
         let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: client)
-        let remote = GitHubRemoteConfig(owner: "Anfyya", repo: "iosAgent", branch: "feature", remoteURL: "https://github.com/Anfyya/iosAgent", tokenReference: "github.default")
+        let remote = GitHubRemoteConfig(owner: "testorg", repo: "sample-repo", branch: "feature", remoteURL: "https://github.com/testorg/sample-repo", tokenReference: "github.default")
         try JSONEncoder.pretty.encode(remote).write(to: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
 
         let summary = try await service.commitWorkspaceChanges(workspaceID: workspace.id, message: "sync")
@@ -877,7 +877,7 @@ struct GitHubSyncServiceTests {
         let secrets = InMemorySecretStore()
         try secrets.save(service: GitHubSyncService.secretService, account: "github.default", value: "token")
         let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: StubGitHubAPIClient())
-        let remote = GitHubRemoteConfig(owner: "Anfyya", repo: "iosAgent", branch: "main", remoteURL: "https://github.com/Anfyya/iosAgent", tokenReference: "github.default")
+        let remote = GitHubRemoteConfig(owner: "testorg", repo: "sample-repo", branch: "main", remoteURL: "https://github.com/testorg/sample-repo", tokenReference: "github.default")
         try JSONEncoder.pretty.encode(remote).write(to: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
 
         await #expect(throws: GitHubSyncError.self) {
@@ -1086,11 +1086,10 @@ private func makeZip(at url: URL, entries: [String: String]) throws {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(content.utf8).write(to: fileURL, options: .atomic)
     }
-    let command = entries.keys.map { "\"\($0)\"" }.joined(separator: " ")
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
     process.currentDirectoryURL = temp
-    process.arguments = ["-c", "zip -q -r \"\(url.path)\" \(command)"]
+    process.arguments = ["-q", "-r", url.path] + entries.keys.sorted()
     try process.run()
     process.waitUntilExit()
     if process.terminationStatus != 0 {

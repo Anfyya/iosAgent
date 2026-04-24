@@ -17,7 +17,8 @@ public enum GitHubSyncError: Error, LocalizedError {
         case let .missingRemoteConfig(id):
             return "GitHub remote is not linked for workspace \(id.uuidString)."
         case let .missingTokenReference(reference):
-            return "GitHub token reference is missing: \(reference)."
+            let suffix = reference.isEmpty ? "" : ": \(reference)"
+            return "GitHub token reference is missing\(suffix)."
         case let .missingToken(reference):
             return "GitHub token is missing in Keychain for \(reference)."
         case .pushConfirmationRequired:
@@ -204,6 +205,7 @@ public struct GitTreeEntry: Encodable, Hashable, Sendable {
 
 public struct GitHubSyncService: Sendable {
     public static let secretService = "LocalAIWorkspace.github"
+    private static let binaryDetectionPrefixBytes = 512
 
     public let workspaceManager: WorkspaceManager
     public let secretStore: any SecretStore
@@ -353,7 +355,7 @@ public struct GitHubSyncService: Sendable {
         for entry in entries {
             let url = try workspaceFS.safeURL(for: entry.path, requiresProtectedPathAccess: true)
             let data = try Data(contentsOf: url)
-            let isBinary = data.prefix(512).contains(0)
+            let isBinary = data.prefix(Self.binaryDetectionPrefixBytes).contains(0)
             if isBinary {
                 skippedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: true, skippedReason: "Binary files require explicit confirmation."))
                 continue
