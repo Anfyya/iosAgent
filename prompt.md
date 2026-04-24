@@ -1,7 +1,5 @@
 # iOS Agent Project Prompt
 
-下面这份提示词可以直接交给另一个 AI / Coding Agent 使用。重点：不要想当然写 iOS 26 Liquid Glass API；如果不确定，必须查 Apple Developer 官方文档或用当前 Xcode 26.4 SDK 验证。
-
 ```text
 你现在是一个顶级 iOS 26.4 / SwiftUI / GitHub Actions / AI Coding Agent 架构师和工程实现者。请你不要想当然，不要用旧 iOS 毛玻璃写法糊弄，不要把 Liquid Glass 当成 .ultraThinMaterial + blur + opacity + shadow。这个项目要求非常明确：我要做一个 iOS 26.4 App，本地仓库是主状态，AI 可自定义 API 接入，重点是上下文管理、缓存命中、权限控制、patch 审核和可选 GitHub 同步。
 
@@ -1234,5 +1232,5 @@ MVP 范围：
 13. README，说明如何配置 API、如何配置签名、如何构建 IPA。
 14. 不确定的 API 必须标注并要求查官方文档，不允许编造。
 
-请先输出架构设计和文件结构，然后再开始写代码。写代码时优先保证能编译，不要堆不存在的 API。Liquid Glass 相关代码必须使用 iOS 26 官方 SwiftUI API；如果当前环境无法确认 API，可先写带 @available(iOS 26.0, *) 的封装，并把具体实现集中在一个 LiquidGlassUI.swift 文件里，方便替换和修正。
+直接开始写代码并使用githubaction构建。写代码时优先保证能编译，不要堆不存在的 API。Liquid Glass 相关代码必须使用 iOS 26 官方 SwiftUI API；如果当前环境无法确认 API，可先写带 @available(iOS 26.0, *) 的封装，并把具体实现集中在一个 LiquidGlassUI.swift 文件里，方便替换和修正。
 ```
