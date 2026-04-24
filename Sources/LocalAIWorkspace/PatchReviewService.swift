@@ -110,6 +110,7 @@ public struct PatchReviewService: Sendable {
     }
 
     public func revise(proposalID: UUID, instruction: String) throws {
+        // TODO: Route revise requests back through AgentLoop with the proposal diff and instruction.
         _ = proposalID
         _ = instruction
     }

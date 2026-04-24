@@ -46,7 +46,7 @@ final class AppModel: ObservableObject {
                 .first?
                 .appendingPathComponent("ProviderProfiles/profiles.json") ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("profiles.json")
         } catch {
-            fatalError(error.localizedDescription)
+            fatalError("Failed to initialize WorkspaceManager: \(error.localizedDescription)")
         }
         secretStore = KeychainSecretStore()
         aiClient = DefaultAIClient()
