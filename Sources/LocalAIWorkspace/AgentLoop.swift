@@ -238,7 +238,8 @@ public struct AgentLoop: Sendable {
     private func jsonString(from value: JSONValue) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = (try? encoder.encode(value)) ?? Data(#"{"encoding_error":true}"#.utf8)
+        let fallback = #"{"encoding_error":true,"payload_kind":"json_value"}"#
+        let data = (try? encoder.encode(value)) ?? Data(fallback.utf8)
         return String(decoding: data, as: UTF8.self)
     }
 }

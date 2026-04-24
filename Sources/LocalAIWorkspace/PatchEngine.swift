@@ -240,6 +240,8 @@ public struct PatchEngine: Sendable {
             })
         }
         guard touchesProtectedPath else { return }
+        // Protected paths are never auto-writable by the agent; they require both an
+        // explicit permission decision and a user-confirmed UI apply path.
         guard options.allowProtectedPaths,
               options.confirmedByUser,
               let permission = options.permissionDecision?.permission,

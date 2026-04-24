@@ -207,10 +207,10 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
 
             if let argumentString = argumentsValue as? String {
                 guard let data = argumentString.data(using: .utf8) else {
-                    throw ProviderAdapterError.invalidToolArguments(sanitizedPreview(argumentString))
+                    throw ProviderAdapterError.invalidToolArguments("Tool arguments are not valid UTF-8 JSON: \(sanitizedPreview(argumentString))")
                 }
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    throw ProviderAdapterError.invalidToolArguments(sanitizedPreview(argumentString))
+                    throw ProviderAdapterError.invalidToolArguments("Tool arguments must decode to a JSON object: \(sanitizedPreview(argumentString))")
                 }
                 return ToolCall(name: name, arguments: object.mapValues(JSONValue.convert(any:)))
             }
