@@ -203,7 +203,7 @@ public struct WorkspaceImportService: Sendable {
             let ext = preferredURL.pathExtension
             let parent = preferredURL.deletingLastPathComponent()
             var counter = 2
-            while true {
+            while counter < 10_000 {
                 let name = ext.isEmpty ? "\(base)_copy_\(counter)" : "\(base)_copy_\(counter).\(ext)"
                 let candidate = parent.appendingPathComponent(name)
                 if !FileManager.default.fileExists(atPath: candidate.path) {
@@ -214,6 +214,7 @@ public struct WorkspaceImportService: Sendable {
                 }
                 counter += 1
             }
+            throw WorkspaceImportError.invalidDestinationPath(relativePath)
         }
     }
 

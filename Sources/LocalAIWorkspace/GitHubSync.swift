@@ -151,7 +151,22 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
     }
 
     private func send<Response: Decodable>(path: String, method: String = "GET", queryItems: [URLQueryItem] = [], token: String) async throws -> Response {
-        try await send(path: path, method: method, queryItems: queryItems, token: token, body: Optional<EmptyPayload>.none)
+        guard var components = URLComponents(string: "https://api.github.com\(path)") else {
+            throw GitHubSyncError.invalidResponse
+        }
+        if queryItems.isEmpty == false {
+            components.queryItems = queryItems
+        }
+        guard let url = components.url else {
+            throw GitHubSyncError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        let (data, response) = try await session.data(for: request)
+        return try decode(Response.self, from: data, response: response)
     }
 
     private func send<Response: Decodable, Body: Encodable>(path: String, method: String = "GET", queryItems: [URLQueryItem] = [], token: String, body: Body? = nil) async throws -> Response {
@@ -174,16 +189,25 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
             request.httpBody = try JSONEncoder().encode(body)
         }
         let (data, response) = try await session.data(for: request)
+        return try decode(Response.self, from: data, response: response)
+    }
+
+    private func decode<Response: Decodable>(_ type: Response.Type, from data: Data, response: URLResponse) throws -> Response {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200 ..< 300).contains(statusCode) else {
             let message = (try? decoder.decode(GitHubErrorPayload.self, from: data).message) ?? String(decoding: data, as: UTF8.self)
             throw GitHubSyncError.repositoryRequestFailed(statusCode: statusCode, message: message)
         }
-        if Response.self == EmptyPayload.self, data.isEmpty {
-            return EmptyPayload() as! Response
-        }
-        if Response.self == EmptyPayload.self, let value = try? decoder.decode(EmptyPayload.self, from: data) {
-            return value as! Response
+        if Response.self == EmptyPayload.self {
+            if data.isEmpty {
+                guard let empty = EmptyPayload() as? Response else {
+                    throw GitHubSyncError.invalidResponse
+                }
+                return empty
+            }
+            if let decoded = try? decoder.decode(EmptyPayload.self, from: data) as? Response {
+                return decoded
+            }
         }
         return try decoder.decode(Response.self, from: data)
     }
@@ -205,6 +229,7 @@ public struct GitTreeEntry: Encodable, Hashable, Sendable {
 
 public struct GitHubSyncService: Sendable {
     public static let secretService = "LocalAIWorkspace.github"
+    public static let protectedBranches: Set<String> = ["main", "master"]
     private static let binaryDetectionPrefixBytes = 512
 
     public let workspaceManager: WorkspaceManager
@@ -291,7 +316,7 @@ public struct GitHubSyncService: Sendable {
     public func pushWorkspaceToBranch(workspaceID: UUID, message: String, confirmed: Bool, secondProtectedBranchConfirmation: Bool = false, includeBinaryFiles: Bool = false, includeLargeFiles: Bool = false) async throws -> GitHubCommitSummary {
         guard confirmed else { throw GitHubSyncError.pushConfirmationRequired }
         let remote = try loadRemoteConfig(workspaceID: workspaceID)
-        if ["main", "master"].contains(remote.branch), secondProtectedBranchConfirmation == false {
+        if Self.protectedBranches.contains(remote.branch), secondProtectedBranchConfirmation == false {
             throw GitHubSyncError.protectedBranchRequiresSecondConfirmation(remote.branch)
         }
         let summary = try await commitWorkspaceChanges(workspaceID: workspaceID, message: message, includeBinaryFiles: includeBinaryFiles, includeLargeFiles: includeLargeFiles)

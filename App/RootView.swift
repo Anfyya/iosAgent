@@ -565,7 +565,7 @@ struct RootView: View {
                                 Button("Preview Commit Summary") { Task { await model.previewCommit() } }
                                 Button("Commit & Push") {
                                     Task {
-                                        let isProtectedBranch = ["main", "master"].contains(model.remoteBranch)
+                                        let isProtectedBranch = GitHubSyncService.protectedBranches.contains(model.remoteBranch)
                                         await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !isProtectedBranch)
                                     }
                                 }
