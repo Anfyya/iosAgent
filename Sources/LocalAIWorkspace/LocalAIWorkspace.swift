@@ -40,7 +40,7 @@ public enum MVPSampleData {
                     levels: [
                         ReasoningLevel(label: "低", value: "low"),
                         ReasoningLevel(label: "高", value: "high"),
-                        ReasoningLevel(label: "Max", value: "max")
+                        ReasoningLevel(label: "最大", value: "max")
                     ]
                 ),
                 supportsCache: true,
