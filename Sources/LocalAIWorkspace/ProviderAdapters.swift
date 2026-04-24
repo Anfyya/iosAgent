@@ -209,7 +209,9 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
                 guard let data = argumentString.data(using: .utf8) else {
                     throw ProviderAdapterError.invalidToolArguments(argumentString)
                 }
-                let object = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    throw ProviderAdapterError.invalidToolArguments(argumentString)
+                }
                 return ToolCall(name: name, arguments: object.mapValues(JSONValue.convert(any:)))
             }
             if let argumentObject = argumentsValue as? [String: Any] {

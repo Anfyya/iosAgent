@@ -144,6 +144,8 @@ public struct AgentLoop: Sendable {
         var run = initialRun
         var rounds = 0
 
+        // The loop exits only when the model returns a final answer, the run transitions
+        // into a waiting state, or maxRounds is exceeded and an error is thrown.
         while true {
             if rounds >= maxRounds {
                 run.status = .failed
