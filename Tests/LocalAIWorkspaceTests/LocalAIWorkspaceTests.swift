@@ -121,7 +121,7 @@ struct ContextAndCacheTests {
             previous: previous
         )
 
-        #expect(snapshot.blocks.prefix(3).allSatisfy(\.stable))
+        #expect(snapshot.blocks.prefix(3).allSatisfy { $0.stable })
         #expect(record.cacheHitRate == 0.8)
         #expect(record.missReasons.contains(.providerProfileChanged))
         #expect(record.missReasons.contains(.modelChanged))
