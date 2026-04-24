@@ -54,6 +54,7 @@ public enum AgentLoopError: Error, LocalizedError {
     case maxRoundsExceeded(Int)
     case missingRun(UUID)
     case missingPendingQuestion(UUID)
+    case missingPendingPermissionRequest(UUID)
 
     public var errorDescription: String? {
         switch self {
@@ -63,6 +64,8 @@ public enum AgentLoopError: Error, LocalizedError {
             return "Agent run not found: \(id.uuidString)"
         case let .missingPendingQuestion(id):
             return "Agent run \(id.uuidString) is not waiting for a user answer."
+        case let .missingPendingPermissionRequest(id):
+            return "Agent run \(id.uuidString) is not waiting for a permission decision."
         }
     }
 }
@@ -140,6 +143,54 @@ public struct AgentLoop: Sendable {
         return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)
     }
 
+    public func resumePermission(
+        runID: UUID,
+        approved: Bool,
+        profile: ProviderProfile,
+        apiKey: String?,
+        contextRequest: ContextBuildRequest? = nil
+    ) async throws -> AgentRun {
+        guard var run = try runStore.run(id: runID) else {
+            throw AgentLoopError.missingRun(runID)
+        }
+        guard let pendingCall = run.pendingPermissionRequest else {
+            throw AgentLoopError.missingPendingPermissionRequest(runID)
+        }
+
+        let decision = run.pendingPermissionDecision
+        run.pendingPermissionRequest = nil
+        run.pendingPermissionDecision = nil
+        run.status = .running
+
+        let result: ToolResult
+        if approved {
+            result = try toolExecutor.execute(
+                pendingCall,
+                workspaceID: run.workspaceID,
+                agentRunID: run.id,
+                contextRequest: contextRequest
+            )
+            if pendingCall.name == "propose_patch",
+               case let .string(id)? = result.payload.objectValue?["proposalId"],
+               let proposalID = UUID(uuidString: id) {
+                run.patchProposalIDs.append(proposalID)
+            }
+        } else {
+            result = ToolResult(
+                name: pendingCall.name,
+                payload: .object([
+                    "denied": .bool(true),
+                    "reason": .string(decision?.reason ?? "User denied permission.")
+                ])
+            )
+        }
+
+        run.toolResults.append(result)
+        run.messages.append(AIMessage(role: "tool", content: jsonString(from: result.payload)))
+        try save(&run)
+        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)
+    }
+
     private func continueRun(run initialRun: AgentRun, profile: ProviderProfile, apiKey: String?, contextRequest: ContextBuildRequest?) async throws -> AgentRun {
         var run = initialRun
         var rounds = 0
@@ -161,6 +212,9 @@ public struct AgentLoop: Sendable {
                 tools: SupportedTools.schemas
             )
             let response = try await client.complete(profile: profile, apiKey: apiKey, request: request)
+            if let usage = response.usage {
+                run.usageHistory.append(usage)
+            }
 
             if let text = response.text, response.toolCalls.isEmpty {
                 run.messages.append(AIMessage(role: "assistant", content: text))
@@ -173,11 +227,6 @@ public struct AgentLoop: Sendable {
             rounds += 1
             for call in response.toolCalls {
                 run.toolCalls.append(call)
-                let decision = permissionManager.decide(for: call)
-                run.permissionDecisions.append(
-                    PermissionDecisionRecord(toolName: call.name, permission: decision.permission, reason: decision.reason)
-                )
-
                 if call.name == "ask_question",
                    case let .bool(blocking)? = call.arguments["blocking"],
                    blocking {
@@ -186,6 +235,11 @@ public struct AgentLoop: Sendable {
                     try save(&run)
                     return run
                 }
+
+                let impact = ToolImpactAnalyzer.estimate(call)
+                let decision = permissionManager.decide(for: call, impact: impact)
+                let record = PermissionDecisionRecord(toolName: call.name, permission: decision.permission, reason: decision.reason)
+                run.permissionDecisions.append(record)
 
                 if decision.permission == .deny {
                     let denied = ToolResult(
@@ -198,6 +252,14 @@ public struct AgentLoop: Sendable {
                     run.toolResults.append(denied)
                     run.messages.append(AIMessage(role: "tool", content: jsonString(from: denied.payload)))
                     continue
+                }
+
+                if decision.permission == .ask {
+                    run.pendingPermissionRequest = call
+                    run.pendingPermissionDecision = record
+                    run.status = .waitingForPermission
+                    try save(&run)
+                    return run
                 }
 
                 let result = try toolExecutor.execute(
@@ -216,11 +278,6 @@ public struct AgentLoop: Sendable {
 
                 if decision.permission == .review, call.name == "propose_patch" {
                     run.status = .waitingForPatchReview
-                    try save(&run)
-                    return run
-                }
-                if decision.permission == .ask {
-                    run.status = .waitingForPermission
                     try save(&run)
                     return run
                 }

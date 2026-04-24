@@ -84,9 +84,10 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     public var currentBranch: String?
     public var githubRemote: String?
     public var activeProviderProfileID: String?
+    public var lastOpenedAt: Date?
     public var status: WorkspaceStatus
 
-    public init(id: UUID = UUID(), name: String, rootPath: String, mode: WorkspaceMode, currentBranch: String? = nil, githubRemote: String? = nil, activeProviderProfileID: String? = nil, status: WorkspaceStatus) {
+    public init(id: UUID = UUID(), name: String, rootPath: String, mode: WorkspaceMode, currentBranch: String? = nil, githubRemote: String? = nil, activeProviderProfileID: String? = nil, lastOpenedAt: Date? = nil, status: WorkspaceStatus) {
         self.id = id
         self.name = name
         self.rootPath = rootPath
@@ -94,6 +95,7 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
         self.currentBranch = currentBranch
         self.githubRemote = githubRemote
         self.activeProviderProfileID = activeProviderProfileID
+        self.lastOpenedAt = lastOpenedAt
         self.status = status
     }
 }
@@ -382,10 +384,13 @@ public struct AgentRun: Identifiable, Codable, Hashable, Sendable {
     public var messages: [AIMessage]
     public var toolCalls: [ToolCall]
     public var toolResults: [ToolResult]
+    public var usageHistory: [AIUsage]
     public var permissionDecisions: [PermissionDecisionRecord]
     public var patchProposalIDs: [UUID]
     public var status: AgentRunStatus
     public var pendingQuestion: ToolCall?
+    public var pendingPermissionRequest: ToolCall?
+    public var pendingPermissionDecision: PermissionDecisionRecord?
     public var finalAnswer: String?
     public var failureReason: String?
     public var createdAt: Date
@@ -400,10 +405,13 @@ public struct AgentRun: Identifiable, Codable, Hashable, Sendable {
         messages: [AIMessage] = [],
         toolCalls: [ToolCall] = [],
         toolResults: [ToolResult] = [],
+        usageHistory: [AIUsage] = [],
         permissionDecisions: [PermissionDecisionRecord] = [],
         patchProposalIDs: [UUID] = [],
         status: AgentRunStatus = .running,
         pendingQuestion: ToolCall? = nil,
+        pendingPermissionRequest: ToolCall? = nil,
+        pendingPermissionDecision: PermissionDecisionRecord? = nil,
         finalAnswer: String? = nil,
         failureReason: String? = nil,
         createdAt: Date = .now,
@@ -417,10 +425,13 @@ public struct AgentRun: Identifiable, Codable, Hashable, Sendable {
         self.messages = messages
         self.toolCalls = toolCalls
         self.toolResults = toolResults
+        self.usageHistory = usageHistory
         self.permissionDecisions = permissionDecisions
         self.patchProposalIDs = patchProposalIDs
         self.status = status
         self.pendingQuestion = pendingQuestion
+        self.pendingPermissionRequest = pendingPermissionRequest
+        self.pendingPermissionDecision = pendingPermissionDecision
         self.finalAnswer = finalAnswer
         self.failureReason = failureReason
         self.createdAt = createdAt
@@ -601,15 +612,36 @@ public struct ContextSnapshot: Codable, Hashable, Sendable {
     public var blocks: [ContextBlock]
     public var prefixHash: String
     public var repoSnapshotHash: String
+    public var fileTreeHash: String
+    public var toolSchemaHash: String
+    public var projectRulesHash: String
     public var staticTokenCount: Int
     public var dynamicTokenCount: Int
+    public var includedFiles: [String]
+    public var ignoredFiles: [String]
 
-    public init(blocks: [ContextBlock], prefixHash: String, repoSnapshotHash: String, staticTokenCount: Int, dynamicTokenCount: Int) {
+    public init(
+        blocks: [ContextBlock],
+        prefixHash: String,
+        repoSnapshotHash: String,
+        fileTreeHash: String,
+        toolSchemaHash: String,
+        projectRulesHash: String,
+        staticTokenCount: Int,
+        dynamicTokenCount: Int,
+        includedFiles: [String],
+        ignoredFiles: [String]
+    ) {
         self.blocks = blocks
         self.prefixHash = prefixHash
         self.repoSnapshotHash = repoSnapshotHash
+        self.fileTreeHash = fileTreeHash
+        self.toolSchemaHash = toolSchemaHash
+        self.projectRulesHash = projectRulesHash
         self.staticTokenCount = staticTokenCount
         self.dynamicTokenCount = dynamicTokenCount
+        self.includedFiles = includedFiles
+        self.ignoredFiles = ignoredFiles
     }
 }
 

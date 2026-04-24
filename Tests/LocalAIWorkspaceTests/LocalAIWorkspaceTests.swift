@@ -76,6 +76,23 @@ struct PermissionManagerTests {
         let decision = manager.decide(for: call)
         #expect(decision.permission == .ask)
     }
+
+    @Test func toolImpactAnalyzerTracksProtectedAndDestructiveChanges() async throws {
+        let call = ToolCall(name: "propose_patch", arguments: [
+            "changes": .array([
+                .object([
+                    "path": .string(".mobiledev/cache/state.json"),
+                    "operation": .string("delete")
+                ])
+            ])
+        ])
+
+        let impact = ToolImpactAnalyzer.estimate(call)
+
+        #expect(impact.touchesProtectedPath)
+        #expect(impact.isDestructive)
+        #expect(impact.changedFiles == 1)
+    }
 }
 
 struct ProviderAdapterTests {
@@ -292,6 +309,62 @@ struct ContextAndCacheTests {
         #expect(record.missReasons.contains(.providerProfileChanged))
         #expect(record.missReasons.contains(.modelChanged))
     }
+
+    @Test func dynamicTaskDoesNotChangePrefixHash() async throws {
+        let fs = try makeWorkspaceFS()
+        try fs.writeTextFile(path: "README.md", content: "# RepoGlass\n")
+        let base = ContextBuildRequest(
+            systemPrompt: "system",
+            toolSchemaText: "tools",
+            permissionRules: "permissions",
+            projectRules: "rules",
+            dependencySummary: "swiftui",
+            aiMemory: "memory",
+            currentTask: "first task",
+            userRequirements: "req"
+        )
+        let changed = ContextBuildRequest(
+            systemPrompt: "system",
+            toolSchemaText: "tools",
+            permissionRules: "permissions",
+            projectRules: "rules",
+            dependencySummary: "swiftui",
+            aiMemory: "memory",
+            currentTask: "second task",
+            userRequirements: "different req"
+        )
+
+        let engine = ContextEngine()
+        let snapshot1 = try engine.buildContext(using: base, workspaceFS: fs)
+        let snapshot2 = try engine.buildContext(using: changed, workspaceFS: fs)
+
+        #expect(snapshot1.prefixHash == snapshot2.prefixHash)
+    }
+
+    @Test func ignoredPathsDoNotEnterRepoMapAndFileTreeChangesAffectSnapshot() async throws {
+        let fs = try makeWorkspaceFS()
+        try fs.writeTextFile(path: "README.md", content: "hello\n")
+        try fs.writeTextFile(path: ".mobiledevignore", content: "Ignored\n")
+        try fs.writeTextFile(path: "Ignored/file.txt", content: "skip\n")
+        let request = ContextBuildRequest(
+            systemPrompt: "system",
+            toolSchemaText: "tools",
+            permissionRules: "permissions",
+            projectRules: "rules",
+            dependencySummary: "swiftui",
+            aiMemory: "memory",
+            currentTask: "task",
+            userRequirements: "req"
+        )
+        let engine = ContextEngine()
+        let snapshot1 = try engine.buildContext(using: request, workspaceFS: fs)
+        try fs.writeTextFile(path: "Sources/App.swift", content: "struct App {}\n")
+        let snapshot2 = try engine.buildContext(using: request, workspaceFS: fs)
+
+        #expect(snapshot1.includedFiles.contains("Ignored/file.txt") == false)
+        #expect(snapshot1.ignoredFiles.contains("Ignored/file.txt"))
+        #expect(snapshot1.repoSnapshotHash != snapshot2.repoSnapshotHash)
+    }
 }
 
 struct AgentLoopTests {
@@ -300,7 +373,7 @@ struct AgentLoopTests {
         try fs.writeTextFile(path: "README.md", content: "hello\n")
         let patchStore = InMemoryPatchStore()
         let runStore = InMemoryAgentRunStore()
-        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore, permissionManager: PermissionManager(globalMode: .auto))
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
         let client = StubAIClient(responses: [
             AIResponse(toolCalls: [ToolCall(name: "read_file", arguments: ["path": .string("README.md")])]),
             AIResponse(text: "done")
@@ -331,7 +404,7 @@ struct AgentLoopTests {
         let patchStore = InMemoryPatchStore()
         let runStore = InMemoryAgentRunStore()
         let permissions = PermissionManager(globalMode: .auto)
-        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore, permissionManager: permissions)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
         let client = StubAIClient(responses: [
             AIResponse(toolCalls: [
                 ToolCall(name: "ask_question", arguments: [
@@ -364,7 +437,7 @@ struct AgentLoopTests {
         let patchStore = InMemoryPatchStore()
         let runStore = InMemoryAgentRunStore()
         let permissions = PermissionManager(globalMode: .auto)
-        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore, permissionManager: permissions)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
         let client = StubAIClient(responses: [
             AIResponse(toolCalls: [
                 ToolCall(name: "propose_patch", arguments: [
@@ -401,7 +474,7 @@ struct AgentLoopTests {
         let patchStore = InMemoryPatchStore()
         let runStore = InMemoryAgentRunStore()
         let permissions = PermissionManager(globalMode: .auto)
-        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore, permissionManager: permissions)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
         let client = StubAIClient(responses: Array(repeating: AIResponse(toolCalls: [ToolCall(name: "read_file", arguments: ["path": .string("README.md")])]), count: 3))
         let loop = AgentLoop(client: client, patchStore: patchStore, runStore: runStore, toolExecutor: toolExecutor, permissionManager: permissions, maxRounds: 2)
 
@@ -426,7 +499,7 @@ struct AgentLoopTests {
             globalMode: .auto,
             toolPolicies: ["read_file": ToolPolicy(toolName: "read_file", permission: .deny)]
         )
-        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore, permissionManager: permissions)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
         let client = StubAIClient(responses: [
             AIResponse(toolCalls: [ToolCall(name: "read_file", arguments: ["path": .string("README.md")])]),
             AIResponse(text: "asked denied")
@@ -445,6 +518,267 @@ struct AgentLoopTests {
         #expect(run.status == .completed)
         #expect(run.permissionDecisions.first?.permission == .deny)
         #expect(run.toolResults.first?.payload == .object(["denied": .bool(true), "reason": .string("Auto mode follows per-tool policy with hard safety overrides.")]))
+    }
+
+    @Test func askPermissionDoesNotExecuteToolBeforeResume() async throws {
+        let root = makeTemporaryDirectory()
+        let workspaceManager = try WorkspaceManager(baseURL: root)
+        let workspace = try workspaceManager.createWorkspace(name: "Demo")
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let patchStore = InMemoryPatchStore()
+        let runStore = InMemoryAgentRunStore()
+        let permissions = PermissionManager(globalMode: .auto)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
+        let client = StubAIClient(responses: [
+            AIResponse(toolCalls: [makeWorkflowPatchCall()]),
+            AIResponse(text: "done")
+        ])
+        let loop = AgentLoop(client: client, patchStore: patchStore, runStore: runStore, toolExecutor: toolExecutor, permissionManager: permissions)
+
+        let run = try await loop.start(
+            workspaceID: workspace.id,
+            profile: makeProviderProfile(),
+            apiKey: "secret",
+            modelID: "deepseek-v4-pro",
+            systemPrompt: "system",
+            userTask: "update workflow"
+        )
+
+        #expect(run.status == .waitingForPermission)
+        #expect(run.pendingPermissionRequest?.name == "propose_patch")
+        #expect(run.pendingPermissionDecision?.permission == .ask)
+        #expect(try patchStore.list(workspaceID: workspace.id).isEmpty)
+    }
+
+    @Test func approvePermissionExecutesPendingTool() async throws {
+        let root = makeTemporaryDirectory()
+        let workspaceManager = try WorkspaceManager(baseURL: root)
+        let workspace = try workspaceManager.createWorkspace(name: "Demo")
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let patchStore = InMemoryPatchStore()
+        let runStore = InMemoryAgentRunStore()
+        let permissions = PermissionManager(globalMode: .auto)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
+        let client = StubAIClient(responses: [
+            AIResponse(toolCalls: [makeWorkflowPatchCall()]),
+            AIResponse(text: "approved")
+        ])
+        let loop = AgentLoop(client: client, patchStore: patchStore, runStore: runStore, toolExecutor: toolExecutor, permissionManager: permissions)
+
+        let waiting = try await loop.start(
+            workspaceID: workspace.id,
+            profile: makeProviderProfile(),
+            apiKey: "secret",
+            modelID: "deepseek-v4-pro",
+            systemPrompt: "system",
+            userTask: "update workflow"
+        )
+        let resumed = try await loop.resumePermission(runID: waiting.id, approved: true, profile: makeProviderProfile(), apiKey: "secret")
+
+        #expect(resumed.status == .completed)
+        #expect(resumed.pendingPermissionRequest == nil)
+        #expect(resumed.toolResults.first?.name == "propose_patch")
+        #expect(try patchStore.list(workspaceID: workspace.id).count == 1)
+    }
+
+    @Test func denyPermissionReturnsDeniedResult() async throws {
+        let root = makeTemporaryDirectory()
+        let workspaceManager = try WorkspaceManager(baseURL: root)
+        let workspace = try workspaceManager.createWorkspace(name: "Demo")
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let patchStore = InMemoryPatchStore()
+        let runStore = InMemoryAgentRunStore()
+        let permissions = PermissionManager(globalMode: .auto)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
+        let client = StubAIClient(responses: [
+            AIResponse(toolCalls: [makeWorkflowPatchCall()]),
+            AIResponse(text: "denied")
+        ])
+        let loop = AgentLoop(client: client, patchStore: patchStore, runStore: runStore, toolExecutor: toolExecutor, permissionManager: permissions)
+
+        let waiting = try await loop.start(
+            workspaceID: workspace.id,
+            profile: makeProviderProfile(),
+            apiKey: "secret",
+            modelID: "deepseek-v4-pro",
+            systemPrompt: "system",
+            userTask: "update workflow"
+        )
+        let resumed = try await loop.resumePermission(runID: waiting.id, approved: false, profile: makeProviderProfile(), apiKey: "secret")
+
+        #expect(resumed.status == .completed)
+        #expect(resumed.toolResults.first?.payload == .object([
+            "denied": .bool(true),
+            "reason": .string("Protected credentials or signing files require explicit confirmation.")
+        ]))
+        #expect(try patchStore.list(workspaceID: workspace.id).isEmpty)
+    }
+
+    @Test func pendingPermissionRequestPersists() async throws {
+        let root = makeTemporaryDirectory()
+        let workspaceManager = try WorkspaceManager(baseURL: root)
+        let workspace = try workspaceManager.createWorkspace(name: "Demo")
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let patchStore = InMemoryPatchStore()
+        let runStore = InMemoryAgentRunStore()
+        let permissions = PermissionManager(globalMode: .auto)
+        let toolExecutor = ToolExecutor(workspaceFS: fs, contextEngine: ContextEngine(), patchStore: patchStore)
+        let client = StubAIClient(responses: [AIResponse(toolCalls: [makeWorkflowPatchCall()])])
+        let loop = AgentLoop(client: client, patchStore: patchStore, runStore: runStore, toolExecutor: toolExecutor, permissionManager: permissions)
+
+        let waiting = try await loop.start(
+            workspaceID: workspace.id,
+            profile: makeProviderProfile(),
+            apiKey: "secret",
+            modelID: "deepseek-v4-pro",
+            systemPrompt: "system",
+            userTask: "update workflow"
+        )
+        let persisted = try #require(try runStore.run(id: waiting.id))
+
+        #expect(persisted.pendingPermissionRequest?.name == "propose_patch")
+        #expect(persisted.pendingPermissionDecision?.permission == .ask)
+        #expect(persisted.status == .waitingForPermission)
+    }
+}
+
+struct SecretStoreTests {
+    @Test func saveReadDeleteInMemorySecretStore() async throws {
+        let store = InMemorySecretStore()
+
+        try store.save(service: "provider", account: "default", value: "secret")
+        #expect(try store.exists(service: "provider", account: "default"))
+        #expect(try store.read(service: "provider", account: "default") == "secret")
+
+        try store.delete(service: "provider", account: "default")
+        #expect((try store.read(service: "provider", account: "default")) == nil)
+    }
+
+    @Test func providerProfileExportDoesNotContainPlaintextKey() async throws {
+        var profile = makeProviderProfile()
+        profile.apiKeyReference = "provider.default"
+        let plaintextKey = "super-secret"
+
+        let data = try JSONEncoder().encode(profile)
+        let json = String(decoding: data, as: UTF8.self)
+
+        #expect(json.contains("provider.default"))
+        #expect(json.contains(plaintextKey) == false)
+    }
+}
+
+struct WorkspaceManagerTests {
+    @Test func createWorkspaceUsesFilesRootAndPersistsMetadata() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let reopened = try manager.openWorkspace(id: workspace.id)
+        let fs = try manager.workspaceFS(for: reopened)
+
+        #expect(reopened.rootPath.hasSuffix("/files"))
+        #expect(fs.rootURL.path == reopened.rootPath)
+        #expect(reopened.lastOpenedAt != nil)
+        #expect(FileManager.default.fileExists(atPath: manager.mobiledevURL(for: workspace.id).appendingPathComponent("workspace.json").path))
+    }
+
+    @Test func deleteWorkspaceRemovesMetadataAndFiles() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+
+        try manager.deleteWorkspace(id: workspace.id)
+
+        #expect(FileManager.default.fileExists(atPath: manager.workspaceURL(for: workspace.id).path) == false)
+    }
+}
+
+struct PatchReviewServiceTests {
+    @Test func applyPatchUpdatesStatus() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let fs = try manager.workspaceFS(for: workspace)
+        try fs.writeTextFile(path: "README.md", content: "before\n")
+        let base = try fs.readTextFile(path: "README.md")
+        let store = InMemoryPatchStore()
+        let proposal = PatchProposal(
+            workspaceID: workspace.id,
+            title: "Update",
+            changes: [PatchChange(path: "README.md", operation: .modify, baseHash: base.hash, diff: "@@ -1 +1 @@\n-before\n+after")],
+            reason: "docs",
+            changedFiles: 1,
+            changedLines: 2
+        )
+        try store.save(proposal)
+        let service = PatchReviewService(patchStore: store, workspaceManager: manager, permissionManager: PermissionManager(globalMode: .auto))
+
+        let applied = try service.apply(proposalID: proposal.id, confirmedByUser: true)
+
+        #expect(applied.status == .applied)
+        #expect(applied.snapshotID != nil)
+    }
+
+    @Test func rejectPatchUpdatesStatus() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let store = InMemoryPatchStore()
+        let proposal = PatchProposal(workspaceID: workspace.id, title: "Update", changes: [], reason: "docs")
+        try store.save(proposal)
+        let service = PatchReviewService(patchStore: store, workspaceManager: manager, permissionManager: PermissionManager(globalMode: .auto))
+
+        let rejected = try service.reject(proposalID: proposal.id)
+
+        #expect(rejected.status == .rejected)
+    }
+
+    @Test func applyFailureWritesErrorMessage() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let store = InMemoryPatchStore()
+        let proposal = PatchProposal(
+            workspaceID: workspace.id,
+            title: "Broken",
+            changes: [PatchChange(path: "README.md", operation: .modify, baseHash: "missing", diff: "@@ -1 +1 @@\n-a\n+b")],
+            reason: "docs",
+            changedFiles: 1,
+            changedLines: 2
+        )
+        try store.save(proposal)
+        let service = PatchReviewService(patchStore: store, workspaceManager: manager, permissionManager: PermissionManager(globalMode: .auto))
+
+        #expect(throws: Error.self) {
+            _ = try service.apply(proposalID: proposal.id, confirmedByUser: true)
+        }
+        let failed = try #require(try store.proposal(id: proposal.id))
+        #expect(failed.status == .failed)
+        #expect(failed.errorMessage?.isEmpty == false)
+    }
+
+    @Test func protectedPatchRequiresConfirmation() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let fs = try manager.workspaceFS(for: workspace)
+        try fs.writeTextFile(path: ".mobiledev/cache/state.json", content: "{}", allowProtectedPaths: true)
+        let baseHash = try fs.hashForFile(at: ".mobiledev/cache/state.json", allowProtectedPaths: true)
+        let store = InMemoryPatchStore()
+        let proposal = PatchProposal(
+            workspaceID: workspace.id,
+            title: "Protected",
+            changes: [PatchChange(path: ".mobiledev/cache/state.json", operation: .modify, baseHash: baseHash, diff: "@@ -1 +1 @@\n-{}\n+{\"ok\":true}")],
+            reason: "cache",
+            changedFiles: 1,
+            changedLines: 2
+        )
+        try store.save(proposal)
+        let service = PatchReviewService(patchStore: store, workspaceManager: manager, permissionManager: PermissionManager(globalMode: .auto))
+
+        #expect(throws: Error.self) {
+            _ = try service.apply(proposalID: proposal.id, confirmedByUser: false)
+        }
     }
 }
 
@@ -497,6 +831,20 @@ private func makeProviderProfile() -> ProviderProfile {
             )
         ]
     )
+}
+
+private func makeWorkflowPatchCall() -> ToolCall {
+    ToolCall(name: "propose_patch", arguments: [
+        "title": .string("Update workflow"),
+        "reason": .string("Needs confirmation."),
+        "changes": .array([
+            .object([
+                "path": .string(".github/workflows/build-ios.yml"),
+                "operation": .string("create"),
+                "newContent": .string("name: build\n")
+            ])
+        ])
+    ])
 }
 
 private actor StubAIClient: AIClient {
