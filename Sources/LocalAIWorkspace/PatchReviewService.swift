@@ -19,17 +19,20 @@ public struct PatchReviewService: Sendable {
     public let patchEngine: PatchEngine
     public let workspaceManager: WorkspaceManager
     public let permissionManager: PermissionManager
+    public let snapshotStore: SnapshotStore?
 
     public init(
         patchStore: PatchStore,
         patchEngine: PatchEngine = PatchEngine(),
         workspaceManager: WorkspaceManager,
-        permissionManager: PermissionManager
+        permissionManager: PermissionManager,
+        snapshotStore: SnapshotStore? = nil
     ) {
         self.patchStore = patchStore
         self.patchEngine = patchEngine
         self.workspaceManager = workspaceManager
         self.permissionManager = permissionManager
+        self.snapshotStore = snapshotStore
     }
 
     public func listPending(workspaceID: UUID) throws -> [PatchProposal] {
@@ -77,6 +80,7 @@ public struct PatchReviewService: Sendable {
             proposal.snapshotID = applied.snapshot.id
             proposal.applyResult = "Applied \(applied.appliedFiles.count) file(s)."
             proposal.errorMessage = nil
+            try snapshotStore?.save(applied.snapshot)
             try patchStore.update(proposal)
             return proposal
         } catch {
@@ -110,8 +114,34 @@ public struct PatchReviewService: Sendable {
     }
 
     public func revise(proposalID: UUID, instruction: String) throws {
-        // TODO: Route revise requests back through AgentLoop with the proposal diff and instruction.
-        _ = proposalID
-        _ = instruction
+        guard var proposal = try patchStore.proposal(id: proposalID) else {
+            throw PatchReviewServiceError.missingProposal(proposalID)
+        }
+        proposal.applyResult = """
+        Revision requested:
+        \(instruction)
+
+        Re-open the chat with this patch title, reason, and diff context to generate a revised proposal.
+        """
+        try patchStore.update(proposal)
+    }
+
+    @discardableResult
+    public func restoreSnapshot(snapshotID: UUID, workspaceID: UUID, confirmedByUser: Bool) throws -> SnapshotRecord {
+        guard let snapshot = try snapshotStore?.snapshot(id: snapshotID) else {
+            throw PatchReviewServiceError.missingProposal(snapshotID)
+        }
+        let workspace = try workspaceManager.loadWorkspace(id: workspaceID)
+        let workspaceFS = try workspaceManager.workspaceFS(for: workspace)
+        try patchEngine.restore(
+            snapshot: snapshot,
+            workspaceFS: workspaceFS,
+            options: PatchApplyOptions(
+                allowProtectedPaths: confirmedByUser,
+                confirmedByUser: confirmedByUser,
+                permissionDecision: PermissionDecision(permission: .ask, reason: "Snapshot restore approved by user.")
+            )
+        )
+        return snapshot
     }
 }
