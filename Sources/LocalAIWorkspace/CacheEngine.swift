@@ -24,9 +24,9 @@ public struct CacheEngine: Sendable {
             cacheHitRate: hitRate,
             prefixHash: snapshot.prefixHash,
             repoSnapshotHash: snapshot.repoSnapshotHash,
-            toolSchemaHash: snapshot.blocks.first(where: { $0.type == .toolSchema })?.contentHash ?? "",
-            projectRulesHash: snapshot.blocks.first(where: { $0.type == .projectRules })?.contentHash ?? "",
-            fileTreeHash: snapshot.blocks.first(where: { $0.type == .fileTree })?.contentHash ?? "",
+            toolSchemaHash: snapshot.toolSchemaHash,
+            projectRulesHash: snapshot.projectRulesHash,
+            fileTreeHash: snapshot.fileTreeHash,
             symbolIndexHash: snapshot.blocks.first(where: { $0.type == .repoMap })?.contentHash ?? "",
             staticPrefixTokenCount: snapshot.staticTokenCount,
             dynamicTokenCount: snapshot.dynamicTokenCount,
@@ -55,10 +55,10 @@ public struct CacheEngine: Sendable {
         if previous.provider != provider.name {
             reasons.append(.providerProfileChanged)
         }
-        if previous.toolSchemaHash != currentSnapshot.blocks.first(where: { $0.type == .toolSchema })?.contentHash {
+        if previous.toolSchemaHash != currentSnapshot.toolSchemaHash {
             reasons.append(.toolSchemaChanged)
         }
-        if previous.projectRulesHash != currentSnapshot.blocks.first(where: { $0.type == .projectRules })?.contentHash {
+        if previous.projectRulesHash != currentSnapshot.projectRulesHash {
             reasons.append(.projectRulesChanged)
         }
 

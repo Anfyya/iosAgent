@@ -60,13 +60,11 @@ public struct ToolExecutor: Sendable {
     public let workspaceFS: WorkspaceFS
     public let contextEngine: ContextEngine
     public let patchStore: PatchStore?
-    public let permissionManager: PermissionManager?
 
-    public init(workspaceFS: WorkspaceFS, contextEngine: ContextEngine, patchStore: PatchStore? = nil, permissionManager: PermissionManager? = nil) {
+    public init(workspaceFS: WorkspaceFS, contextEngine: ContextEngine, patchStore: PatchStore? = nil) {
         self.workspaceFS = workspaceFS
         self.contextEngine = contextEngine
         self.patchStore = patchStore
-        self.permissionManager = permissionManager
     }
 
     public func execute(_ call: ToolCall, workspaceID: UUID? = nil, agentRunID: UUID? = nil, contextRequest: ContextBuildRequest? = nil) throws -> ToolResult {
@@ -107,9 +105,8 @@ public struct ToolExecutor: Sendable {
         case "propose_patch":
             let title = try stringArgument(named: "title", in: call.arguments)
             let reason = try stringArgument(named: "reason", in: call.arguments)
-            let changes = try decodePatchChanges(from: call.arguments["changes"])
-            let changedLines = estimateChangedLines(in: changes)
-            let decision = permissionManager?.decide(for: call, changedFiles: changes.count, changedLines: changedLines)
+            let changes = try Self.decodePatchChanges(from: call.arguments["changes"])
+            let impact = ToolImpactAnalyzer.estimate(call)
             let proposal = PatchProposal(
                 workspaceID: workspaceID,
                 agentRunID: agentRunID,
@@ -117,8 +114,8 @@ public struct ToolExecutor: Sendable {
                 changes: changes,
                 reason: reason,
                 status: .pendingReview,
-                changedFiles: changes.count,
-                changedLines: changedLines
+                changedFiles: max(changes.count, impact.changedFiles),
+                changedLines: impact.changedLines
             )
             try patchStore?.save(proposal)
             return ToolResult(name: call.name, payload: .object([
@@ -126,9 +123,7 @@ public struct ToolExecutor: Sendable {
                 "proposalId": .string(proposal.id.uuidString),
                 "changeCount": .integer(proposal.changes.count),
                 "changedFiles": .integer(proposal.changedFiles),
-                "changedLines": .integer(proposal.changedLines),
-                "reviewRequired": .bool((decision?.permission ?? .review) != .automatic),
-                "permission": .string(decision?.permission.rawValue ?? ToolPermission.review.rawValue)
+                "changedLines": .integer(proposal.changedLines)
             ]))
 
         case "get_context_status":
@@ -155,7 +150,7 @@ public struct ToolExecutor: Sendable {
         return value
     }
 
-    private func decodePatchChanges(from value: JSONValue?) throws -> [PatchChange] {
+    public static func decodePatchChanges(from value: JSONValue?) throws -> [PatchChange] {
         guard case let .array(items)? = value else {
             throw ToolExecutionError.malformedPayload("changes must be an array")
         }
@@ -168,22 +163,4 @@ public struct ToolExecutor: Sendable {
         }
     }
 
-    private func estimateChangedLines(in changes: [PatchChange]) -> Int {
-        changes.reduce(into: 0) { total, change in
-            switch change.operation {
-            case .modify:
-                total += change.diff?
-                    .split(separator: "\n", omittingEmptySubsequences: false)
-                    .filter { line in
-                        guard let prefix = line.first else { return false }
-                        return prefix == "+" || prefix == "-"
-                    }
-                    .count ?? 0
-            case .create:
-                total += change.newContent?.split(separator: "\n", omittingEmptySubsequences: false).count ?? 0
-            case .delete, .rename:
-                total += 1
-            }
-        }
-    }
 }
