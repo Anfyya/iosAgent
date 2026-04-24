@@ -186,6 +186,7 @@ public struct ProviderProfile: Identifiable, Codable, Hashable, Sendable {
     public var baseURL: String
     public var endpoint: String
     public var auth: AuthConfiguration
+    public var apiKeyReference: String?
     public var supportsStreaming: Bool
     public var supportsToolCalling: Bool
     public var supportsJSONMode: Bool
@@ -201,13 +202,14 @@ public struct ProviderProfile: Identifiable, Codable, Hashable, Sendable {
     public var extraBodyParameters: [String: JSONValue]
     public var modelProfiles: [ModelProfile]
 
-    public init(id: String, name: String, apiStyle: APIStyle, baseURL: String, endpoint: String, auth: AuthConfiguration, supportsStreaming: Bool, supportsToolCalling: Bool, supportsJSONMode: Bool, supportsVision: Bool, supportsReasoning: Bool, supportsPromptCache: Bool, supportsExplicitCacheControl: Bool, supportsWebSearch: Bool, requestFieldMapping: [String: String] = [:], responseFieldMapping: [String: String] = [:], usageFieldMapping: [String: String] = [:], extraHeaders: [String: String] = [:], extraBodyParameters: [String: JSONValue] = [:], modelProfiles: [ModelProfile]) {
+    public init(id: String, name: String, apiStyle: APIStyle, baseURL: String, endpoint: String, auth: AuthConfiguration, apiKeyReference: String? = nil, supportsStreaming: Bool, supportsToolCalling: Bool, supportsJSONMode: Bool, supportsVision: Bool, supportsReasoning: Bool, supportsPromptCache: Bool, supportsExplicitCacheControl: Bool, supportsWebSearch: Bool, requestFieldMapping: [String: String] = [:], responseFieldMapping: [String: String] = [:], usageFieldMapping: [String: String] = [:], extraHeaders: [String: String] = [:], extraBodyParameters: [String: JSONValue] = [:], modelProfiles: [ModelProfile]) {
         self.id = id
         self.name = name
         self.apiStyle = apiStyle
         self.baseURL = baseURL
         self.endpoint = endpoint
         self.auth = auth
+        self.apiKeyReference = apiKeyReference
         self.supportsStreaming = supportsStreaming
         self.supportsToolCalling = supportsToolCalling
         self.supportsJSONMode = supportsJSONMode
@@ -275,18 +277,22 @@ public struct AIRequest: Codable, Hashable, Sendable {
     public var temperature: Double?
     public var maxTokens: Int?
     public var stream: Bool
+    public var toolChoice: String?
     public var reasoning: ReasoningConfiguration?
+    public var webSearch: JSONValue?
     public var tools: [ToolCallSchema]?
     public var cacheHint: CacheHint?
     public var extraParameters: [String: JSONValue]
 
-    public init(messages: [AIMessage], model: String, temperature: Double? = nil, maxTokens: Int? = nil, stream: Bool, reasoning: ReasoningConfiguration? = nil, tools: [ToolCallSchema]? = nil, cacheHint: CacheHint? = nil, extraParameters: [String: JSONValue] = [:]) {
+    public init(messages: [AIMessage], model: String, temperature: Double? = nil, maxTokens: Int? = nil, stream: Bool, toolChoice: String? = nil, reasoning: ReasoningConfiguration? = nil, webSearch: JSONValue? = nil, tools: [ToolCallSchema]? = nil, cacheHint: CacheHint? = nil, extraParameters: [String: JSONValue] = [:]) {
         self.messages = messages
         self.model = model
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.stream = stream
+        self.toolChoice = toolChoice
         self.reasoning = reasoning
+        self.webSearch = webSearch
         self.tools = tools
         self.cacheHint = cacheHint
         self.extraParameters = extraParameters
@@ -341,6 +347,87 @@ public struct AIResponse: Codable, Hashable, Sendable {
     }
 }
 
+public enum AgentRunStatus: String, Codable, CaseIterable, Sendable {
+    case running
+    case waitingForUser
+    case waitingForPermission
+    case waitingForPatchReview
+    case completed
+    case failed
+    case cancelled
+}
+
+public struct PermissionDecisionRecord: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var toolName: String
+    public var permission: ToolPermission
+    public var reason: String
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), toolName: String, permission: ToolPermission, reason: String, createdAt: Date = .now) {
+        self.id = id
+        self.toolName = toolName
+        self.permission = permission
+        self.reason = reason
+        self.createdAt = createdAt
+    }
+}
+
+public struct AgentRun: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var workspaceID: UUID
+    public var providerID: String
+    public var modelID: String
+    public var userTask: String
+    public var messages: [AIMessage]
+    public var toolCalls: [ToolCall]
+    public var toolResults: [ToolResult]
+    public var permissionDecisions: [PermissionDecisionRecord]
+    public var patchProposalIDs: [UUID]
+    public var status: AgentRunStatus
+    public var pendingQuestion: ToolCall?
+    public var finalAnswer: String?
+    public var failureReason: String?
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        workspaceID: UUID,
+        providerID: String,
+        modelID: String,
+        userTask: String,
+        messages: [AIMessage] = [],
+        toolCalls: [ToolCall] = [],
+        toolResults: [ToolResult] = [],
+        permissionDecisions: [PermissionDecisionRecord] = [],
+        patchProposalIDs: [UUID] = [],
+        status: AgentRunStatus = .running,
+        pendingQuestion: ToolCall? = nil,
+        finalAnswer: String? = nil,
+        failureReason: String? = nil,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.providerID = providerID
+        self.modelID = modelID
+        self.userTask = userTask
+        self.messages = messages
+        self.toolCalls = toolCalls
+        self.toolResults = toolResults
+        self.permissionDecisions = permissionDecisions
+        self.patchProposalIDs = patchProposalIDs
+        self.status = status
+        self.pendingQuestion = pendingQuestion
+        self.finalAnswer = finalAnswer
+        self.failureReason = failureReason
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum ToolPermission: String, Codable, CaseIterable, Sendable {
     case deny
     case automatic = "auto"
@@ -390,6 +477,14 @@ public enum PatchOperation: String, Codable, CaseIterable, Sendable {
     case rename
 }
 
+public enum PatchProposalStatus: String, Codable, CaseIterable, Sendable {
+    case pendingReview
+    case applied
+    case rejected
+    case failed
+    case superseded
+}
+
 public struct PatchChange: Codable, Hashable, Sendable {
     public var path: String
     public var operation: PatchOperation
@@ -410,17 +505,33 @@ public struct PatchChange: Codable, Hashable, Sendable {
 
 public struct PatchProposal: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
+    public var workspaceID: UUID?
+    public var agentRunID: UUID?
     public var title: String
     public var changes: [PatchChange]
     public var reason: String
     public var createdAt: Date
+    public var status: PatchProposalStatus
+    public var changedFiles: Int
+    public var changedLines: Int
+    public var applyResult: String?
+    public var errorMessage: String?
+    public var snapshotID: UUID?
 
-    public init(id: UUID = UUID(), title: String, changes: [PatchChange], reason: String, createdAt: Date = .now) {
+    public init(id: UUID = UUID(), workspaceID: UUID? = nil, agentRunID: UUID? = nil, title: String, changes: [PatchChange], reason: String, createdAt: Date = .now, status: PatchProposalStatus = .pendingReview, changedFiles: Int? = nil, changedLines: Int? = nil, applyResult: String? = nil, errorMessage: String? = nil, snapshotID: UUID? = nil) {
         self.id = id
+        self.workspaceID = workspaceID
+        self.agentRunID = agentRunID
         self.title = title
         self.changes = changes
         self.reason = reason
         self.createdAt = createdAt
+        self.status = status
+        self.changedFiles = changedFiles ?? changes.count
+        self.changedLines = changedLines ?? 0
+        self.applyResult = applyResult
+        self.errorMessage = errorMessage
+        self.snapshotID = snapshotID
     }
 }
 
@@ -432,8 +543,9 @@ public struct SnapshotRecord: Identifiable, Codable, Hashable, Sendable {
     public var fileHashes: [String: String]
     public var changedFiles: [String]
     public var patchID: UUID?
+    public var snapshotRootPath: String?
 
-    public init(id: UUID = UUID(), workspaceID: UUID? = nil, createdAt: Date = .now, reason: String, fileHashes: [String: String], changedFiles: [String], patchID: UUID? = nil) {
+    public init(id: UUID = UUID(), workspaceID: UUID? = nil, createdAt: Date = .now, reason: String, fileHashes: [String: String], changedFiles: [String], patchID: UUID? = nil, snapshotRootPath: String? = nil) {
         self.id = id
         self.workspaceID = workspaceID
         self.createdAt = createdAt
@@ -441,6 +553,7 @@ public struct SnapshotRecord: Identifiable, Codable, Hashable, Sendable {
         self.fileHashes = fileHashes
         self.changedFiles = changedFiles
         self.patchID = patchID
+        self.snapshotRootPath = snapshotRootPath
     }
 }
 

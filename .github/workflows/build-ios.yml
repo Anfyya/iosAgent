@@ -13,8 +13,38 @@ permissions:
   contents: read
 
 jobs:
+  swift-package-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run swift test
+        run: swift test
+
+  xcodegen-validate:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.4
+        run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
   build-simulator:
     runs-on: macos-26
+    needs:
+      - swift-package-tests
+      - xcodegen-validate
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +56,8 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -33,23 +65,52 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
+      - name: Pick simulator destination
+        id: simulator
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, subprocess
+          preferred = [
+              "iPhone 16 Pro",
+              "iPhone 16",
+              "iPhone 15 Pro",
+              "iPhone 15"
+          ]
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
+          selected = None
+          for runtime, devices in data.get("devices", {}).items():
+              if "iOS" not in runtime:
+                  continue
+              for name in preferred:
+                  if any(device.get("name") == name and device.get("isAvailable", False) for device in devices):
+                      selected = f"platform=iOS Simulator,name={name}"
+                      break
+              if selected:
+                  break
+          if not selected:
+              raise SystemExit("No supported iOS simulator device was found.")
+          print(f"destination={selected}")
+          PY
+
       - name: Build for iOS Simulator
         run: |
           xcodebuild \
             -project LocalAIWorkspace.xcodeproj \
             -scheme LocalAIWorkspaceApp \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -destination '${{ steps.simulator.outputs.destination }}' \
             -configuration Release \
+            -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Upload simulator build logs
+      - name: Upload simulator build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-build-logs
+          name: simulator-build-artifacts
           path: |
-            ~/Library/Logs/scan
+            ${{ runner.temp }}/LocalAIWorkspace.xcresult
             ~/Library/Developer/Xcode/DerivedData
           if-no-files-found: ignore
 
@@ -122,6 +183,7 @@ jobs:
             -configuration Release \
             -destination generic/platform=iOS \
             -archivePath $RUNNER_TEMP/LocalAIWorkspace.xcarchive \
+            -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace-archive.xcresult \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             archive
 
@@ -155,11 +217,13 @@ jobs:
             -exportPath $RUNNER_TEMP/export \
             -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist
 
-      - name: Upload IPA artifact
+      - name: Upload signed artifacts
         if: steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: LocalAIWorkspace-ipa
+          name: LocalAIWorkspace-signed-artifacts
           path: |
             ${{ runner.temp }}/LocalAIWorkspace.xcarchive
+            ${{ runner.temp }}/LocalAIWorkspace-archive.xcresult
             ${{ runner.temp }}/export
+          if-no-files-found: ignore

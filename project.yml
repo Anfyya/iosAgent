@@ -4,7 +4,6 @@ options:
 settings:
   base:
     SWIFT_VERSION: 6.0
-    PRODUCT_NAME: LocalAIWorkspace
     DEVELOPMENT_ASSET_PATHS: ""
 packages:
   LocalAIWorkspace:
@@ -21,6 +20,7 @@ targets:
         product: LocalAIWorkspace
     settings:
       base:
+        PRODUCT_NAME: LocalAIWorkspaceApp
         PRODUCT_BUNDLE_IDENTIFIER: com.anfyya.LocalAIWorkspace
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO

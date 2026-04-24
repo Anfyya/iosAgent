@@ -7,6 +7,8 @@ public enum PatchEngineError: Error, LocalizedError {
     case invalidDiff(String)
     case missingNewContent(String)
     case missingRenameTarget(String)
+    case protectedPathRequiresConfirmation(String)
+    case missingSnapshotRoot
 
     public var errorDescription: String? {
         switch self {
@@ -22,7 +24,23 @@ public enum PatchEngineError: Error, LocalizedError {
             return "New file content missing for \(path)."
         case let .missingRenameTarget(path):
             return "Rename target missing for \(path)."
+        case let .protectedPathRequiresConfirmation(path):
+            return "Protected path changes require explicit confirmation: \(path)."
+        case .missingSnapshotRoot:
+            return "Snapshot metadata is missing the snapshot root path."
         }
+    }
+}
+
+public struct PatchApplyOptions: Hashable, Sendable {
+    public var allowProtectedPaths: Bool
+    public var confirmedByUser: Bool
+    public var permissionDecision: PermissionDecision?
+
+    public init(allowProtectedPaths: Bool = false, confirmedByUser: Bool = false, permissionDecision: PermissionDecision? = nil) {
+        self.allowProtectedPaths = allowProtectedPaths
+        self.confirmedByUser = confirmedByUser
+        self.permissionDecision = permissionDecision
     }
 }
 
@@ -39,15 +57,16 @@ public struct AppliedPatchResult: Hashable, Sendable {
 public struct PatchEngine: Sendable {
     public init() {}
 
-    public func apply(proposal: PatchProposal, workspaceID: UUID? = nil, workspaceFS: WorkspaceFS) throws -> AppliedPatchResult {
+    public func apply(proposal: PatchProposal, workspaceID: UUID? = nil, workspaceFS: WorkspaceFS, options: PatchApplyOptions = PatchApplyOptions()) throws -> AppliedPatchResult {
         let snapshotID = UUID()
-        let snapshotRoot = workspaceFS.rootURL.appendingPathComponent(".mobiledev/snapshots/\(snapshotID.uuidString)", isDirectory: true)
+        let snapshotRoot = snapshotDirectory(for: workspaceFS, snapshotID: snapshotID)
         try FileManager.default.createDirectory(at: snapshotRoot, withIntermediateDirectories: true)
 
         var originalHashes: [String: String] = [:]
         var changedFiles: [String] = []
 
         for change in proposal.changes {
+            try ensurePathAccessAllowed(for: change, workspaceFS: workspaceFS, options: options)
             let originalURL = try? workspaceFS.safeURL(for: change.path, requiresProtectedPathAccess: true)
             if let originalURL, FileManager.default.fileExists(atPath: originalURL.path) {
                 let originalData = try Data(contentsOf: originalURL)
@@ -57,7 +76,7 @@ public struct PatchEngine: Sendable {
                 try originalData.write(to: backupURL)
             }
 
-            try apply(change: change, workspaceFS: workspaceFS)
+            try apply(change: change, workspaceFS: workspaceFS, options: options)
             changedFiles.append(change.newPath ?? change.path)
         }
 
@@ -66,13 +85,31 @@ public struct PatchEngine: Sendable {
             reason: proposal.reason,
             fileHashes: originalHashes,
             changedFiles: changedFiles,
-            patchID: proposal.id
+            patchID: proposal.id,
+            snapshotRootPath: snapshotRoot.path
         )
 
         return AppliedPatchResult(snapshot: snapshot, appliedFiles: changedFiles)
     }
 
-    private func apply(change: PatchChange, workspaceFS: WorkspaceFS) throws {
+    public func restore(snapshot: SnapshotRecord, workspaceFS: WorkspaceFS, options: PatchApplyOptions = PatchApplyOptions()) throws {
+        guard let snapshotRootPath = snapshot.snapshotRootPath else {
+            throw PatchEngineError.missingSnapshotRoot
+        }
+        let snapshotRoot = URL(fileURLWithPath: snapshotRootPath, isDirectory: true)
+        for path in snapshot.changedFiles {
+            let backupURL = snapshotRoot.appendingPathComponent(path)
+            if FileManager.default.fileExists(atPath: backupURL.path) {
+                let content = try String(decoding: Data(contentsOf: backupURL), as: UTF8.self)
+                let change = PatchChange(path: path, operation: .create, newContent: content)
+                try apply(change: change, workspaceFS: workspaceFS, options: options)
+            } else if (try? workspaceFS.safeURL(for: path, requiresProtectedPathAccess: options.allowProtectedPaths)) != nil {
+                try? workspaceFS.deleteItem(path: path, allowProtectedPaths: options.allowProtectedPaths)
+            }
+        }
+    }
+
+    private func apply(change: PatchChange, workspaceFS: WorkspaceFS, options: PatchApplyOptions) throws {
         switch change.operation {
         case .modify:
             let baseHash = try require(change.baseHash, for: change.path)
@@ -82,18 +119,18 @@ public struct PatchEngine: Sendable {
             }
             let diff = try require(change.diff, for: change.path, error: PatchEngineError.missingDiff(change.path))
             let updated = try applyUnifiedDiff(diff, to: current.content)
-            try workspaceFS.writeTextFile(path: change.path, content: updated, allowProtectedPaths: true)
+            try workspaceFS.writeTextFile(path: change.path, content: updated, allowProtectedPaths: options.allowProtectedPaths)
 
         case .create:
             let content = try require(change.newContent, for: change.path, error: PatchEngineError.missingNewContent(change.path))
-            try workspaceFS.writeTextFile(path: change.path, content: content, allowProtectedPaths: true)
+            try workspaceFS.writeTextFile(path: change.path, content: content, allowProtectedPaths: options.allowProtectedPaths)
 
         case .delete:
-            try workspaceFS.deleteItem(path: change.path, allowProtectedPaths: true)
+            try workspaceFS.deleteItem(path: change.path, allowProtectedPaths: options.allowProtectedPaths)
 
         case .rename:
             let newPath = try require(change.newPath, for: change.path, error: PatchEngineError.missingRenameTarget(change.path))
-            try workspaceFS.moveItem(from: change.path, to: newPath, allowProtectedPaths: true)
+            try workspaceFS.moveItem(from: change.path, to: newPath, allowProtectedPaths: options.allowProtectedPaths)
         }
     }
 
@@ -183,5 +220,28 @@ public struct PatchEngine: Sendable {
         }
 
         return (value(at: 1), value(at: 2))
+    }
+
+    private func snapshotDirectory(for workspaceFS: WorkspaceFS, snapshotID: UUID) -> URL {
+        let workspaceRoot = workspaceFS.rootURL.lastPathComponent == "files"
+            ? workspaceFS.rootURL.deletingLastPathComponent()
+            : workspaceFS.rootURL
+        return workspaceRoot.appendingPathComponent(".mobiledev/snapshots/\(snapshotID.uuidString)", isDirectory: true)
+    }
+
+    private func ensurePathAccessAllowed(for change: PatchChange, workspaceFS: WorkspaceFS, options: PatchApplyOptions) throws {
+        let paths = [change.path, change.newPath].compactMap { $0 }
+        let touchesProtectedPath = paths.contains { path in
+            workspaceFS.protectedPathPrefixes.contains(where: { prefix in
+                path == prefix || path.hasPrefix(prefix + "/")
+            })
+        }
+        guard touchesProtectedPath else { return }
+        guard options.allowProtectedPaths, options.confirmedByUser else {
+            throw PatchEngineError.protectedPathRequiresConfirmation(paths.joined(separator: ", "))
+        }
+        guard let permission = options.permissionDecision?.permission, permission == .ask || permission == .review else {
+            throw PatchEngineError.protectedPathRequiresConfirmation(paths.joined(separator: ", "))
+        }
     }
 }

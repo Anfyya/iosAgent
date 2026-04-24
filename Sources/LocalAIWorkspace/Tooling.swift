@@ -59,13 +59,17 @@ public enum ToolExecutionError: Error {
 public struct ToolExecutor: Sendable {
     public let workspaceFS: WorkspaceFS
     public let contextEngine: ContextEngine
+    public let patchStore: PatchStore?
+    public let permissionManager: PermissionManager?
 
-    public init(workspaceFS: WorkspaceFS, contextEngine: ContextEngine) {
+    public init(workspaceFS: WorkspaceFS, contextEngine: ContextEngine, patchStore: PatchStore? = nil, permissionManager: PermissionManager? = nil) {
         self.workspaceFS = workspaceFS
         self.contextEngine = contextEngine
+        self.patchStore = patchStore
+        self.permissionManager = permissionManager
     }
 
-    public func execute(_ call: ToolCall, contextRequest: ContextBuildRequest? = nil) throws -> ToolResult {
+    public func execute(_ call: ToolCall, workspaceID: UUID? = nil, agentRunID: UUID? = nil, contextRequest: ContextBuildRequest? = nil) throws -> ToolResult {
         switch call.name {
         case "list_files":
             let files = try workspaceFS.listFiles().map { entry in
@@ -104,11 +108,27 @@ public struct ToolExecutor: Sendable {
             let title = try stringArgument(named: "title", in: call.arguments)
             let reason = try stringArgument(named: "reason", in: call.arguments)
             let changes = try decodePatchChanges(from: call.arguments["changes"])
-            let proposal = PatchProposal(title: title, changes: changes, reason: reason)
+            let changedLines = estimateChangedLines(in: changes)
+            let decision = permissionManager?.decide(for: call, changedFiles: changes.count, changedLines: changedLines)
+            let proposal = PatchProposal(
+                workspaceID: workspaceID,
+                agentRunID: agentRunID,
+                title: title,
+                changes: changes,
+                reason: reason,
+                status: .pendingReview,
+                changedFiles: changes.count,
+                changedLines: changedLines
+            )
+            try patchStore?.save(proposal)
             return ToolResult(name: call.name, payload: .object([
                 "queued": .bool(true),
                 "proposalId": .string(proposal.id.uuidString),
-                "changeCount": .integer(proposal.changes.count)
+                "changeCount": .integer(proposal.changes.count),
+                "changedFiles": .integer(proposal.changedFiles),
+                "changedLines": .integer(proposal.changedLines),
+                "reviewRequired": .bool((decision?.permission ?? .review) != .automatic),
+                "permission": .string(decision?.permission.rawValue ?? ToolPermission.review.rawValue)
             ]))
 
         case "get_context_status":
@@ -145,6 +165,25 @@ public struct ToolExecutor: Sendable {
         return try items.map { item in
             let data = try encoder.encode(item)
             return try decoder.decode(PatchChange.self, from: data)
+        }
+    }
+
+    private func estimateChangedLines(in changes: [PatchChange]) -> Int {
+        changes.reduce(into: 0) { total, change in
+            switch change.operation {
+            case .modify:
+                total += change.diff?
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { line in
+                        guard let prefix = line.first else { return false }
+                        return prefix == "+" || prefix == "-"
+                    }
+                    .count ?? 0
+            case .create:
+                total += change.newContent?.split(separator: "\n", omittingEmptySubsequences: false).count ?? 0
+            case .delete, .rename:
+                total += 1
+            }
         }
     }
 }
