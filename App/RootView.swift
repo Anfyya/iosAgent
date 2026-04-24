@@ -442,7 +442,7 @@ struct RootView: View {
                         metric("Repo Snapshot", record.repoSnapshotHash)
                         metric("Latency", "\(record.latencyMs)ms")
                         if record.cachedTokens == 0 {
-                            Text("Provider 未返回缓存 token，此处仅显示 prefix hash 估算。")
+                            Text("Provider did not return cached tokens; showing only a prefix-hash estimate.")
                                 .foregroundStyle(.secondary)
                         }
                     }

@@ -253,7 +253,7 @@ final class AppModel: ObservableObject {
             let fs = try workspaceManager.workspaceFS(for: workspace)
             let context = try contextEngine.buildContext(using: makeContextRequest(), workspaceFS: fs)
             currentContextSnapshot = context
-            let loop = makeAgentLoop(for: workspace)
+            let loop = try makeAgentLoop(for: workspace)
             let run = try await loop.start(
                 workspaceID: workspace.id,
                 profile: profile,
@@ -274,7 +274,7 @@ final class AppModel: ObservableObject {
         do {
             let fs = try workspaceManager.workspaceFS(for: selectedWorkspace!)
             let snapshot = try contextEngine.buildContext(using: makeContextRequest(), workspaceFS: fs)
-            let loop = makeAgentLoop(for: selectedWorkspace!)
+            let loop = try makeAgentLoop(for: selectedWorkspace!)
             let updated = try await loop.resume(runID: run.id, answer: questionAnswer, profile: profile, apiKey: try apiKeyForProfile(profile), contextRequest: makeContextRequest())
             questionAnswer = ""
             handle(run: updated, profile: profile, snapshot: snapshot)
@@ -288,7 +288,7 @@ final class AppModel: ObservableObject {
         do {
             let fs = try workspaceManager.workspaceFS(for: workspace)
             let snapshot = try contextEngine.buildContext(using: makeContextRequest(), workspaceFS: fs)
-            let loop = makeAgentLoop(for: workspace)
+            let loop = try makeAgentLoop(for: workspace)
             let updated = try await loop.resumePermission(runID: run.id, approved: approved, profile: profile, apiKey: try apiKeyForProfile(profile), contextRequest: makeContextRequest())
             handle(run: updated, profile: profile, snapshot: snapshot)
         } catch {
@@ -351,11 +351,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func makeAgentLoop(for workspace: Workspace) -> AgentLoop {
+    private func makeAgentLoop(for workspace: Workspace) throws -> AgentLoop {
         let patchStore = FilePatchStore(storageURL: workspaceManager.mobiledevURL(for: workspace.id).appendingPathComponent("patches.json"))
         let runStore = FileAgentRunStore(storageURL: workspaceManager.mobiledevURL(for: workspace.id).appendingPathComponent("agent_runs.json"))
-        let fs = try? workspaceManager.workspaceFS(for: workspace)
-        let executor = ToolExecutor(workspaceFS: fs ?? (try! WorkspaceFS(rootURL: URL(fileURLWithPath: workspace.rootPath))), contextEngine: contextEngine, patchStore: patchStore)
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let executor = ToolExecutor(workspaceFS: fs, contextEngine: contextEngine, patchStore: patchStore)
         return AgentLoop(client: aiClient, patchStore: patchStore, runStore: runStore, toolExecutor: executor, permissionManager: permissionManager)
     }
 

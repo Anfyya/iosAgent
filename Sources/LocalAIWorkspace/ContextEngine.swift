@@ -63,7 +63,7 @@ public struct ContextEngine: Sendable {
         let staticBlocks = contextBlocks.filter(\.stable)
         let dynamicBlocks = contextBlocks.filter { !$0.stable }
         let prefixHash = StableHasher.fnv1a64(string: staticBlocks.map(\.contentHash).joined(separator: "|"))
-        let repoSnapshotHash = StableHasher.fnv1a64(string: fileTreeHash + "|" + repoMap)
+        let repoSnapshotHash = StableHasher.fnv1a64(string: fileTree + "|" + repoMap)
 
         return ContextSnapshot(
             blocks: contextBlocks,
