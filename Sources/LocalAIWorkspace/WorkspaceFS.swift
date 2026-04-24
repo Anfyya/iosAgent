@@ -54,6 +54,7 @@ public struct WorkspaceFS: Sendable {
     public func safeURL(for path: String, requiresProtectedPathAccess: Bool = false, allowWorkspaceRoot: Bool = false) throws -> URL {
         let normalizedInput = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedInput.hasPrefix("/") else { throw WorkspaceFSError.absolutePath }
+        guard !normalizedInput.contains("\\") else { throw WorkspaceFSError.pathTraversal }
         guard !normalizedInput.split(separator: "/").contains("..") else { throw WorkspaceFSError.pathTraversal }
 
         let trimmedPath = normalizedInput.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

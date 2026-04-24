@@ -223,6 +223,9 @@ public struct PatchEngine: Sendable {
     }
 
     private func snapshotDirectory(for workspaceFS: WorkspaceFS, snapshotID: UUID) -> URL {
+        // WorkspaceFS should point at `workspace/files`; snapshots live beside it in
+        // `workspace/.mobiledev/snapshots`. Tests may still point the root directly at
+        // the workspace root, so keep that layout working too.
         let workspaceRoot = workspaceFS.rootURL.lastPathComponent == "files"
             ? workspaceFS.rootURL.deletingLastPathComponent()
             : workspaceFS.rootURL

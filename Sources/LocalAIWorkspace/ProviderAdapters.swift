@@ -207,10 +207,10 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
 
             if let argumentString = argumentsValue as? String {
                 guard let data = argumentString.data(using: .utf8) else {
-                    throw ProviderAdapterError.invalidToolArguments(argumentString)
+                    throw ProviderAdapterError.invalidToolArguments(sanitizedPreview(argumentString))
                 }
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    throw ProviderAdapterError.invalidToolArguments(argumentString)
+                    throw ProviderAdapterError.invalidToolArguments(sanitizedPreview(argumentString))
                 }
                 return ToolCall(name: name, arguments: object.mapValues(JSONValue.convert(any:)))
             }
@@ -323,6 +323,14 @@ private func setNested(value: Any, parts: [String], in dictionary: inout [String
     var nested = dictionary[first] as? [String: Any] ?? [:]
     setNested(value: value, parts: Array(parts.dropFirst()), in: &nested)
     dictionary[first] = nested
+}
+
+private func sanitizedPreview(_ value: String, limit: Int = 120) -> String {
+    let compact = value.replacingOccurrences(of: "\n", with: " ")
+    if compact.count <= limit {
+        return compact
+    }
+    return String(compact.prefix(limit)) + "…"
 }
 
 private extension JSONValue {
