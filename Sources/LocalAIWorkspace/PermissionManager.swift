@@ -95,18 +95,23 @@ public struct PermissionManager: Sendable {
     }
 
     private func allPaths(from arguments: [String: JSONValue]) -> [String] {
-        arguments.compactMap { key, value in
-            guard key.localizedCaseInsensitiveContains("path") || key == "paths" else { return nil }
+        var paths: [String] = []
+
+        for (key, value) in arguments where key.localizedCaseInsensitiveContains("path") || key == "paths" {
             switch value {
-            case let .string(path): return path
+            case let .string(path):
+                paths.append(path)
             case let .array(values):
-                return values.compactMap {
-                    if case let .string(path) = $0 { return path }
-                    return nil
-                }.joined(separator: "\n")
-            default: return nil
+                for item in values {
+                    if case let .string(path) = item {
+                        paths.append(path)
+                    }
+                }
+            default:
+                break
             }
         }
-        .flatMap { $0.split(separator: "\n").map(String.init) }
+
+        return paths
     }
 }
