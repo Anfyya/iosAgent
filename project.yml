@@ -1,0 +1,37 @@
+name: LocalAIWorkspace
+options:
+  minimumXcodeGenVersion: 2.38.0
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    PRODUCT_NAME: LocalAIWorkspace
+    DEVELOPMENT_ASSET_PATHS: ""
+packages:
+  LocalAIWorkspace:
+    path: .
+targets:
+  LocalAIWorkspaceApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+    dependencies:
+      - package: LocalAIWorkspace
+        product: LocalAIWorkspace
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.anfyya.LocalAIWorkspace
+        TARGETED_DEVICE_FAMILY: 1
+        SUPPORTS_MACCATALYST: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: LocalAIWorkspace
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleDefault
+        CODE_SIGN_STYLE: Automatic
+schemes:
+  LocalAIWorkspaceApp:
+    build:
+      targets:
+        LocalAIWorkspaceApp: all
