@@ -1077,6 +1077,7 @@ private actor StubGitHubAPIClient: GitHubAPIClient {
     func getWorkflowRun(owner: String, repo: String, runID: Int, token: String) async throws -> GitHubWorkflowRun { GitHubWorkflowRun(id: runID) }
     func listJobsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubWorkflowJob] { [] }
     func listArtifactsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubArtifact] { [] }
+    func downloadArtifactArchive(owner: String, repo: String, artifactID: Int, token: String) async throws -> Data { Data() }
 }
 
 private func makeZip(at url: URL, entries: [String: String]) throws {
