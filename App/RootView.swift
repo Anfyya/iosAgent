@@ -14,6 +14,9 @@ struct RootView: View {
     @State private var showProviderEditor = false
     @State private var editingProvider: ProviderProfile?
     @State private var providerAPIKey = ""
+    @State private var webCloudflareEndpoint = ""
+    @State private var webCloudflareToken = ""
+    @State private var webAliyunAPIKey = ""
     @State private var renameWorkspace: Workspace?
     @State private var renameWorkspaceName = ""
     @State private var pendingDeleteProject: Workspace?
@@ -1583,6 +1586,40 @@ struct RootView: View {
                     }
                 }
 
+                Section("联网工具") {
+                    TextField("Cloudflare Worker 地址", text: $webCloudflareEndpoint)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+
+                    SecureField("Cloudflare Token", text: $webCloudflareToken)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    SecureField("阿里云 API Key", text: $webAliyunAPIKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("阿里云默认服务")
+                            .font(.subheadline.weight(.medium))
+                        Text(WebToolConfiguration.defaultAliyunOpenSearchHost)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                        Text("\(WebToolConfiguration.defaultAliyunWorkspaceName) / \(WebToolConfiguration.defaultAliyunServiceID)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("保存联网工具设置") {
+                        model.saveWebToolSettings(
+                            cloudflareFetchEndpoint: webCloudflareEndpoint,
+                            aliyunAPIKey: webAliyunAPIKey,
+                            cloudflareToken: webCloudflareToken
+                        )
+                    }
+                }
+
                 Section("模型权限") {
                     Picker(
                         "权限模式",
@@ -1619,7 +1656,14 @@ struct RootView: View {
                 }
             }
             .navigationTitle("设置")
+            .onAppear { loadWebToolSettings() }
         }
+    }
+
+    private func loadWebToolSettings() {
+        webCloudflareEndpoint = model.readCloudflareFetchEndpoint()
+        webCloudflareToken = model.readCloudflareFetchToken()
+        webAliyunAPIKey = model.readAliyunOpenSearchAPIKey()
     }
 
     private var logsView: some View {

@@ -294,6 +294,134 @@ struct PatchEngineTests {
     }
 }
 
+struct WebToolTests {
+    @Test func webSearchNormalizesAliyunResponseAndCapsTopK() async throws {
+        let fs = try makeWorkspaceFS()
+        let payload = Data("""
+        {
+          "data": {
+            "results": [
+              {
+                "title": "Example",
+                "link": "https://example.com/a",
+                "summary": "Result snippet",
+                "siteName": "example.com",
+                "published_at": "2026-04-26"
+              }
+            ]
+          }
+        }
+        """.utf8)
+        let webClient = StubWebToolClient(response: WebToolHTTPResponse(statusCode: 200, contentType: "application/json", data: payload))
+        let executor = ToolExecutor(
+            workspaceFS: fs,
+            contextEngine: ContextEngine(),
+            webConfiguration: WebToolConfiguration(
+                aliyunOpenSearchHost: "https://search.example.com",
+                aliyunOpenSearchAPIKey: "ali-key"
+            ),
+            webClient: webClient
+        )
+
+        let result = try await executor.execute(ToolCall(name: "web_search", arguments: [
+            "query": .string("SwiftUI 性能"),
+            "top_k": .integer(99),
+            "content_type": .string("invalid")
+        ]))
+
+        let request = try #require(webClient.recordedRequests().first)
+        #expect(request.url.absoluteString == "https://search.example.com/v3/openapi/workspaces/default/web-search/ops-web-search-001")
+        #expect(request.headers["Authorization"] == "Bearer ali-key")
+        #expect(request.body["top_k"] == .integer(10))
+        #expect(request.body["content_type"] == .string("snippet"))
+
+        guard case let .object(object) = result.payload,
+              case let .array(results)? = object["results"],
+              case let .object(first)? = results.first else {
+            throw NSError(domain: "web_search_result_shape", code: 1)
+        }
+        #expect(object["provider"] == .string("aliyun-opensearch"))
+        #expect(first["title"] == .string("Example"))
+        #expect(first["url"] == .string("https://example.com/a"))
+        #expect(first["snippet"] == .string("Result snippet"))
+        #expect(first["source"] == .string("example.com"))
+        #expect(first["publishedAt"] == .string("2026-04-26"))
+        #expect(first["position"] == .integer(1))
+    }
+
+    @Test func webFetchRejectsPrivateURLsWithoutCallingWorker() async throws {
+        let fs = try makeWorkspaceFS()
+        let webClient = StubWebToolClient(response: WebToolHTTPResponse(statusCode: 200, contentType: "application/json", data: Data()))
+        let executor = ToolExecutor(
+            workspaceFS: fs,
+            contextEngine: ContextEngine(),
+            webConfiguration: WebToolConfiguration(
+                cloudflareFetchEndpoint: "https://worker.example.com/fetch",
+                cloudflareFetchToken: "cf-token"
+            ),
+            webClient: webClient
+        )
+
+        let result = try await executor.execute(ToolCall(name: "web_fetch", arguments: [
+            "url": .string("http://127.0.0.1/admin")
+        ]))
+
+        #expect(webClient.recordedRequests().isEmpty)
+        guard case let .object(object) = result.payload else {
+            throw NSError(domain: "web_fetch_result_shape", code: 1)
+        }
+        #expect(object["error"] == .bool(true))
+        #expect(object["provider"] == .string("cloudflare-worker"))
+        #expect(object["status"] == .integer(400))
+    }
+
+    @Test func webFetchTruncatesWorkerContent() async throws {
+        let fs = try makeWorkspaceFS()
+        let payload = Data("""
+        {
+          "finalUrl": "https://example.com/final",
+          "status": 200,
+          "ok": true,
+          "contentType": "text/html",
+          "title": "Fetched",
+          "content": "abcdefghijklmnopqrstuvwxyz"
+        }
+        """.utf8)
+        let webClient = StubWebToolClient(response: WebToolHTTPResponse(statusCode: 200, contentType: "application/json", data: payload))
+        let executor = ToolExecutor(
+            workspaceFS: fs,
+            contextEngine: ContextEngine(),
+            webConfiguration: WebToolConfiguration(
+                cloudflareFetchEndpoint: "https://worker.example.com/fetch",
+                cloudflareFetchToken: "cf-token"
+            ),
+            webClient: webClient
+        )
+
+        let result = try await executor.execute(ToolCall(name: "web_fetch", arguments: [
+            "url": .string("https://example.com/article"),
+            "max_chars": .integer(8)
+        ]))
+
+        let request = try #require(webClient.recordedRequests().first)
+        #expect(request.url.absoluteString == "https://worker.example.com/fetch")
+        #expect(request.headers["Authorization"] == "Bearer cf-token")
+        #expect(request.body["url"] == .string("https://example.com/article"))
+
+        guard case let .object(object) = result.payload else {
+            throw NSError(domain: "web_fetch_success_shape", code: 1)
+        }
+        #expect(object["url"] == .string("https://example.com/article"))
+        #expect(object["finalUrl"] == .string("https://example.com/final"))
+        #expect(object["status"] == .integer(200))
+        #expect(object["ok"] == .bool(true))
+        #expect(object["title"] == .string("Fetched"))
+        #expect(object["content"] == .string("abcdefgh"))
+        #expect(object["truncated"] == .bool(true))
+        #expect(object["length"] == .integer(26))
+    }
+}
+
 struct ContextAndCacheTests {
     @Test func contextPlacesStableBlocksFirstAndTracksCacheMisses() async throws {
         let fs = try makeWorkspaceFS()
@@ -1144,6 +1272,35 @@ private final class StubAIClient: AIClient, @unchecked Sendable {
             continuation.yield(.done(text: response.text ?? "", reasoning: response.reasoningContent ?? "", usage: response.usage))
             continuation.finish()
         }
+    }
+}
+
+private struct RecordedWebRequest: Sendable {
+    var url: URL
+    var headers: [String: String]
+    var body: [String: JSONValue]
+}
+
+private final class StubWebToolClient: WebToolClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [RecordedWebRequest] = []
+    private let response: WebToolHTTPResponse
+
+    init(response: WebToolHTTPResponse) {
+        self.response = response
+    }
+
+    func postJSON(url: URL, headers: [String: String], body: [String: JSONValue]) async throws -> WebToolHTTPResponse {
+        lock.lock()
+        requests.append(RecordedWebRequest(url: url, headers: headers, body: body))
+        lock.unlock()
+        return response
+    }
+
+    func recordedRequests() -> [RecordedWebRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
     }
 }
 

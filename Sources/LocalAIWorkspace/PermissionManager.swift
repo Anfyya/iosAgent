@@ -14,6 +14,8 @@ public struct PermissionManager: Sendable {
             .init(toolName: "list_files", permission: .automatic),
             .init(toolName: "read_file", permission: .automatic),
             .init(toolName: "search_in_files", permission: .automatic),
+            .init(toolName: "web_search", permission: .automatic),
+            .init(toolName: "web_fetch", permission: .automatic),
             .init(toolName: "get_file_hash", permission: .automatic),
             .init(toolName: "get_context_status", permission: .automatic),
             .init(toolName: "ask_question", permission: .automatic),

@@ -71,6 +71,10 @@ final class AppModel: ObservableObject {
     private let githubSyncService: GitHubSyncService
     private let gitHubProjectImportService: GitHubProjectImportService
     private var lastLoadedWorkspaceID: UUID?
+    private let webToolSecretService = "LocalAIWorkspace.webTools"
+    private let cloudflareFetchEndpointAccount = "cloudflare.fetch.endpoint"
+    private let aliyunOpenSearchAPIKeyAccount = "aliyun.opensearch.apiKey"
+    private let cloudflareFetchTokenAccount = "cloudflare.fetch.token"
 
     private var permissionManager: PermissionManager {
         PermissionManager(
@@ -527,6 +531,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func readCloudflareFetchEndpoint() -> String {
+        readWebToolSecret(account: cloudflareFetchEndpointAccount) ?? ""
+    }
+
+    func readAliyunOpenSearchAPIKey() -> String {
+        readWebToolSecret(account: aliyunOpenSearchAPIKeyAccount) ?? ""
+    }
+
+    func readCloudflareFetchToken() -> String {
+        readWebToolSecret(account: cloudflareFetchTokenAccount) ?? ""
+    }
+
+    func saveWebToolSettings(cloudflareFetchEndpoint: String, aliyunAPIKey: String, cloudflareToken: String) {
+        do {
+            let endpoint = cloudflareFetchEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            try saveOrDeleteWebToolSecret(account: cloudflareFetchEndpointAccount, value: endpoint)
+            try saveOrDeleteWebToolSecret(account: aliyunOpenSearchAPIKeyAccount, value: aliyunAPIKey)
+            try saveOrDeleteWebToolSecret(account: cloudflareFetchTokenAccount, value: cloudflareToken)
+            lastConnectionStatus = "联网工具设置已保存。"
+            try log(action: "web_tools_saved", workspaceID: selectedWorkspace?.id, metadata: [
+                "cloudflareEndpointConfigured": .bool(endpoint.isEmpty == false),
+                "aliyunAPIKeyConfigured": .bool(aliyunAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false),
+                "cloudflareTokenConfigured": .bool(cloudflareToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ])
+        } catch {
+            present(error)
+        }
+    }
+
     func testConnection(profile: ProviderProfile, apiKey: String?) async {
         do {
             let key = try apiKeyForProfile(profile, override: apiKey)
@@ -870,8 +903,39 @@ final class AppModel: ObservableObject {
         let patchStore = patchStore(for: workspace.id)
         let runStore = agentRunStore(for: workspace.id)
         let fs = try workspaceManager.workspaceFS(for: workspace)
-        let executor = ToolExecutor(workspaceFS: fs, contextEngine: contextEngine, patchStore: patchStore)
+        let executor = ToolExecutor(
+            workspaceFS: fs,
+            contextEngine: contextEngine,
+            patchStore: patchStore,
+            webConfiguration: makeWebToolConfiguration()
+        )
         return AgentLoop(client: aiClient, patchStore: patchStore, runStore: runStore, toolExecutor: executor, permissionManager: permissionManager)
+    }
+
+    private func makeWebToolConfiguration() -> WebToolConfiguration {
+        return WebToolConfiguration(
+            aliyunOpenSearchHost: WebToolConfiguration.defaultAliyunOpenSearchHost,
+            aliyunOpenSearchAPIKey: readWebToolSecret(account: aliyunOpenSearchAPIKeyAccount),
+            aliyunWorkspaceName: WebToolConfiguration.defaultAliyunWorkspaceName,
+            aliyunServiceID: WebToolConfiguration.defaultAliyunServiceID,
+            cloudflareFetchEndpoint: readWebToolSecret(account: cloudflareFetchEndpointAccount),
+            cloudflareFetchToken: readWebToolSecret(account: cloudflareFetchTokenAccount)
+        )
+    }
+
+    private func readWebToolSecret(account: String) -> String? {
+        let value = (try? secretStore.read(service: webToolSecretService, account: account)) ?? ""
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func saveOrDeleteWebToolSecret(account: String, value: String) throws {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            try secretStore.delete(service: webToolSecretService, account: account)
+        } else {
+            try secretStore.save(service: webToolSecretService, account: account, value: trimmed)
+        }
     }
 
     private func makePatchReviewService(for workspaceID: UUID) -> PatchReviewService {

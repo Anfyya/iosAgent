@@ -211,7 +211,7 @@ public struct AgentLoop: Sendable {
 
         let result: ToolResult
         if approved {
-            result = try toolExecutor.execute(
+            result = try await toolExecutor.execute(
                 pendingCall,
                 workspaceID: run.workspaceID,
                 agentRunID: run.id,
@@ -381,7 +381,7 @@ public struct AgentLoop: Sendable {
                     return run
                 }
 
-                let result = try toolExecutor.execute(
+                let result = try await toolExecutor.execute(
                     call,
                     workspaceID: run.workspaceID,
                     agentRunID: run.id,
