@@ -40,7 +40,7 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
         var body: [String: Any] = [:]
         set(value: request.model, for: requestField("model", default: "model", profile: profile), in: &body)
         set(
-            value: request.messages.map { ["role": $0.role, "content": $0.content] },
+            value: request.messages.map(makeMessagePayload),
             for: requestField("messages", default: "messages", profile: profile),
             in: &body
         )
@@ -67,7 +67,13 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
         if let reasoning = request.reasoning,
            let modelProfile = profile.modelProfiles.first(where: { $0.id == request.model }),
            let mapping = modelProfile.reasoningMapping {
-            set(value: reasoning.enabled, for: mapping.enabledField, in: &body)
+            let enabledValue: Any
+            if mapping.enabledField.hasSuffix(".type") {
+                enabledValue = reasoning.enabled ? "enabled" : "disabled"
+            } else {
+                enabledValue = reasoning.enabled
+            }
+            set(value: enabledValue, for: mapping.enabledField, in: &body)
             if let level = reasoning.level {
                 set(value: level, for: mapping.depthField, in: &body)
             }
@@ -129,6 +135,25 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
         )
     }
 
+    private func makeMessagePayload(_ message: AIMessage) -> [String: Any] {
+        var payload: [String: Any] = ["role": message.role]
+        if message.content.isEmpty, message.toolCalls?.isEmpty == false {
+            payload["content"] = NSNull()
+        } else {
+            payload["content"] = message.content
+        }
+        if let toolCallID = message.toolCallID {
+            payload["tool_call_id"] = toolCallID
+        }
+        if let reasoningContent = message.reasoningContent, reasoningContent.isEmpty == false {
+            payload["reasoning_content"] = reasoningContent
+        }
+        if let toolCalls = message.toolCalls, toolCalls.isEmpty == false {
+            payload["tool_calls"] = toolCalls.map(makeToolCallPayload)
+        }
+        return payload
+    }
+
     private func requestField(_ logicalName: String, default defaultValue: String, profile: ProviderProfile) -> String {
         profile.requestFieldMapping[logicalName] ?? defaultValue
     }
@@ -144,6 +169,20 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
                     "properties": schema.parameters.mapValues(\.rawValue),
                     "required": schema.required
                 ]
+            ]
+        ]
+    }
+
+    private func makeToolCallPayload(_ call: ToolCall) -> [String: Any] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let argumentsData = (try? encoder.encode(call.arguments)) ?? Data("{}".utf8)
+        return [
+            "id": call.externalID ?? call.id.uuidString,
+            "type": "function",
+            "function": [
+                "name": call.name,
+                "arguments": String(decoding: argumentsData, as: UTF8.self)
             ]
         ]
     }
@@ -203,6 +242,7 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
             guard let dictionary = item as? [String: Any] else { return nil }
             let function = (dictionary["function"] as? [String: Any]) ?? dictionary
             guard let name = function["name"] as? String else { return nil }
+            let callID = dictionary["id"] as? String
             let argumentsValue = function["arguments"]
 
             if let argumentString = argumentsValue as? String {
@@ -212,12 +252,12 @@ public struct OpenAICompatibleAdapter: ProviderAdapter {
                 guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     throw ProviderAdapterError.invalidToolArguments("Tool arguments must decode to a JSON object: \(sanitizedPreview(argumentString))")
                 }
-                return ToolCall(name: name, arguments: object.mapValues(JSONValue.convert(any:)))
+                return ToolCall(externalID: callID, name: name, arguments: object.mapValues(JSONValue.convert(any:)))
             }
             if let argumentObject = argumentsValue as? [String: Any] {
-                return ToolCall(name: name, arguments: argumentObject.mapValues(JSONValue.convert(any:)))
+                return ToolCall(externalID: callID, name: name, arguments: argumentObject.mapValues(JSONValue.convert(any:)))
             }
-            return ToolCall(name: name, arguments: [:])
+            return ToolCall(externalID: callID, name: name, arguments: [:])
         }
     }
 }

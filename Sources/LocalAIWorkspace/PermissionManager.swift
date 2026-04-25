@@ -34,11 +34,16 @@ public struct PermissionManager: Sendable {
     }()
 
     public func decide(for call: ToolCall, impact: ToolImpact = ToolImpact(), currentBranch: String? = nil) -> PermissionDecision {
-        if impact.touchesProtectedPath || matchesSecretOrCredentialPath(arguments: call.arguments) {
+        let policy = toolPolicies[call.name]
+        let isFullyAutomaticWriteMode = globalMode == .auto && policy?.permission == .automatic
+
+        if !isFullyAutomaticWriteMode,
+           (impact.touchesProtectedPath || matchesSecretOrCredentialPath(arguments: call.arguments)) {
             return PermissionDecision(permission: .ask, reason: "Protected credentials or signing files require explicit confirmation.")
         }
 
-        if touchesWorkflow(arguments: call.arguments) || impact.touchedPaths.contains(where: { $0.hasPrefix(".github/workflows") }) {
+        if !isFullyAutomaticWriteMode,
+           (touchesWorkflow(arguments: call.arguments) || impact.touchedPaths.contains(where: { $0.hasPrefix(".github/workflows") })) {
             return PermissionDecision(permission: .ask, reason: "Workflow changes always require confirmation.")
         }
 
@@ -46,15 +51,17 @@ public struct PermissionManager: Sendable {
             return PermissionDecision(permission: .ask, reason: "Pushing to a protected branch requires confirmation.")
         }
 
-        if impact.isDestructive || call.name == "propose_delete_file" || call.name == "delete_workspace" {
+        if !isFullyAutomaticWriteMode,
+           (impact.isDestructive || call.name == "propose_delete_file" || call.name == "delete_workspace") {
             return PermissionDecision(permission: .ask, reason: "Destructive operations require confirmation.")
         }
 
-        if impact.changedFiles > 5 || impact.changedLines > 400 {
+        if !isFullyAutomaticWriteMode,
+           (impact.changedFiles > 5 || impact.changedLines > 400) {
             return PermissionDecision(permission: .ask, reason: "Large changes require confirmation.")
         }
 
-        guard let policy = toolPolicies[call.name] else {
+        guard let policy else {
             return PermissionDecision(permission: .ask, reason: "Unknown tool falls back to ask.")
         }
 

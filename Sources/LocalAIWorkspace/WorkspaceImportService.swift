@@ -106,7 +106,7 @@ public struct WorkspaceImportService: Sendable {
         var items: [ImportedItemResult] = []
         var warnings: [String] = []
 
-        guard let enumerator = FileManager.default.enumerator(at: extractionRoot, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+        guard let enumerator = FileManager.default.enumerator(at: extractionRoot, includingPropertiesForKeys: [.isDirectoryKey]) else {
             return WorkspaceImportResult(items: [], warnings: ["ZIP archive was empty."])
         }
 
@@ -129,7 +129,7 @@ public struct WorkspaceImportService: Sendable {
     }
 
     private func copyDirectory(sourceURL: URL, destinationRoot: String?, fs: WorkspaceFS, conflictPolicy: ImportConflictPolicy) throws -> WorkspaceImportResult {
-        guard let enumerator = FileManager.default.enumerator(at: sourceURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+        guard let enumerator = FileManager.default.enumerator(at: sourceURL, includingPropertiesForKeys: [.isDirectoryKey]) else {
             return WorkspaceImportResult(items: [], warnings: [])
         }
         var items: [ImportedItemResult] = []

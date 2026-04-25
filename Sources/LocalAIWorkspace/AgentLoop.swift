@@ -102,7 +102,8 @@ public struct AgentLoop: Sendable {
         systemPrompt: String,
         userTask: String,
         initialMessages: [AIMessage]? = nil,
-        contextRequest: ContextBuildRequest? = nil
+        contextRequest: ContextBuildRequest? = nil,
+        requestOptions: AgentRequestOptions = AgentRequestOptions()
     ) async throws -> AgentRun {
         let messages = initialMessages ?? [
             AIMessage(role: "system", content: systemPrompt),
@@ -116,10 +117,10 @@ public struct AgentLoop: Sendable {
             messages: messages
         )
         try save(&run)
-        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)
+        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest, requestOptions: requestOptions)
     }
 
-    public func resume(runID: UUID, answer: String, profile: ProviderProfile, apiKey: String?, contextRequest: ContextBuildRequest? = nil) async throws -> AgentRun {
+    public func resume(runID: UUID, answer: String, profile: ProviderProfile, apiKey: String?, contextRequest: ContextBuildRequest? = nil, requestOptions: AgentRequestOptions = AgentRequestOptions()) async throws -> AgentRun {
         guard var run = try runStore.run(id: runID) else {
             throw AgentLoopError.missingRun(runID)
         }
@@ -138,11 +139,11 @@ public struct AgentLoop: Sendable {
         run.pendingQuestion = nil
         run.status = .running
         run.toolResults.append(answerResult)
-        run.messages.append(AIMessage(role: "tool", content: jsonString(from: answerResult.payload)))
+        run.messages.append(AIMessage(role: "tool", content: jsonString(from: answerResult.payload), toolCallID: question.externalID ?? question.id.uuidString))
         run.messages.append(AIMessage(role: "user", content: answer))
         try save(&run)
 
-        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)
+        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest, requestOptions: requestOptions)
     }
 
     public func resumePermission(
@@ -150,7 +151,8 @@ public struct AgentLoop: Sendable {
         approved: Bool,
         profile: ProviderProfile,
         apiKey: String?,
-        contextRequest: ContextBuildRequest? = nil
+        contextRequest: ContextBuildRequest? = nil,
+        requestOptions: AgentRequestOptions = AgentRequestOptions()
     ) async throws -> AgentRun {
         guard var run = try runStore.run(id: runID) else {
             throw AgentLoopError.missingRun(runID)
@@ -188,12 +190,12 @@ public struct AgentLoop: Sendable {
         }
 
         run.toolResults.append(result)
-        run.messages.append(AIMessage(role: "tool", content: jsonString(from: result.payload)))
+        run.messages.append(AIMessage(role: "tool", content: jsonString(from: result.payload), toolCallID: pendingCall.externalID ?? pendingCall.id.uuidString))
         try save(&run)
-        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)
+        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest, requestOptions: requestOptions)
     }
 
-    private func continueRun(run initialRun: AgentRun, profile: ProviderProfile, apiKey: String?, contextRequest: ContextBuildRequest?) async throws -> AgentRun {
+    private func continueRun(run initialRun: AgentRun, profile: ProviderProfile, apiKey: String?, contextRequest: ContextBuildRequest?, requestOptions: AgentRequestOptions) async throws -> AgentRun {
         var run = initialRun
         var rounds = 0
 
@@ -210,16 +212,21 @@ public struct AgentLoop: Sendable {
             let request = AIRequest(
                 messages: run.messages,
                 model: run.modelID,
+                maxTokens: requestOptions.maxTokens,
                 stream: false,
-                tools: SupportedTools.schemas
+                toolChoice: requestOptions.toolChoice,
+                reasoning: requestOptions.reasoning,
+                tools: SupportedTools.schemas,
+                extraParameters: requestOptions.extraParameters
             )
             let response = try await client.complete(profile: profile, apiKey: apiKey, request: request)
             if let usage = response.usage {
                 run.usageHistory.append(usage)
             }
 
+            appendAssistantMessage(from: response, to: &run)
+
             if let text = response.text, response.toolCalls.isEmpty {
-                run.messages.append(AIMessage(role: "assistant", content: text))
                 run.finalAnswer = text
                 run.status = .completed
                 try save(&run)
@@ -252,7 +259,7 @@ public struct AgentLoop: Sendable {
                         ])
                     )
                     run.toolResults.append(denied)
-                    run.messages.append(AIMessage(role: "tool", content: jsonString(from: denied.payload)))
+                    run.messages.append(AIMessage(role: "tool", content: jsonString(from: denied.payload), toolCallID: call.externalID ?? call.id.uuidString))
                     continue
                 }
 
@@ -276,7 +283,7 @@ public struct AgentLoop: Sendable {
                    let proposalID = UUID(uuidString: id) {
                     run.patchProposalIDs.append(proposalID)
                 }
-                run.messages.append(AIMessage(role: "tool", content: jsonString(from: result.payload)))
+                run.messages.append(AIMessage(role: "tool", content: jsonString(from: result.payload), toolCallID: call.externalID ?? call.id.uuidString))
 
                 if decision.permission == .review, call.name == "propose_patch" {
                     run.status = .waitingForPatchReview
@@ -300,6 +307,20 @@ public struct AgentLoop: Sendable {
         let fallback = #"{"encoding_error":true,"payload_kind":"json_value"}"#
         let data = (try? encoder.encode(value)) ?? Data(fallback.utf8)
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private func appendAssistantMessage(from response: AIResponse, to run: inout AgentRun) {
+        guard response.text != nil || response.reasoningContent != nil || response.toolCalls.isEmpty == false else {
+            return
+        }
+        run.messages.append(
+            AIMessage(
+                role: "assistant",
+                content: response.text ?? "",
+                toolCalls: response.toolCalls.isEmpty ? nil : response.toolCalls,
+                reasoningContent: response.reasoningContent
+            )
+        )
     }
 }
 

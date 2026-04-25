@@ -74,7 +74,7 @@ public struct PatchReviewService: Sendable {
                 workspaceID: workspaceID,
                 workspaceFS: workspaceFS,
                 options: PatchApplyOptions(
-                    allowProtectedPaths: confirmedByUser,
+                    allowProtectedPaths: confirmedByUser || decision.permission == .automatic,
                     confirmedByUser: confirmedByUser,
                     permissionDecision: decision
                 )

@@ -97,15 +97,23 @@ public struct PatchEngine: Sendable {
             throw PatchEngineError.missingSnapshotRoot
         }
         let snapshotRoot = URL(fileURLWithPath: snapshotRootPath, isDirectory: true)
-        for path in snapshot.changedFiles {
-            let backupURL = snapshotRoot.appendingPathComponent(path)
-            if FileManager.default.fileExists(atPath: backupURL.path) {
-                let content = try String(decoding: Data(contentsOf: backupURL), as: UTF8.self)
-                let change = PatchChange(path: path, operation: .create, newContent: content)
-                try apply(change: change, workspaceFS: workspaceFS, options: options)
-            } else if (try? workspaceFS.safeURL(for: path, requiresProtectedPathAccess: options.allowProtectedPaths)) != nil {
+        let originalPaths = Set(snapshot.fileHashes.keys)
+        let changedPaths = Set(snapshot.changedFiles)
+        let pathsToDelete = changedPaths.subtracting(originalPaths)
+
+        for path in pathsToDelete {
+            if (try? workspaceFS.safeURL(for: path, requiresProtectedPathAccess: options.allowProtectedPaths)) != nil {
                 try? workspaceFS.deleteItem(path: path, allowProtectedPaths: options.allowProtectedPaths)
             }
+        }
+
+        for path in originalPaths {
+            let backupURL = snapshotRoot.appendingPathComponent(path)
+            guard FileManager.default.fileExists(atPath: backupURL.path) else { continue }
+            let restoredData = try Data(contentsOf: backupURL)
+            let destinationURL = try workspaceFS.safeURL(for: path, requiresProtectedPathAccess: options.allowProtectedPaths)
+            try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try restoredData.write(to: destinationURL, options: .atomic)
         }
     }
 
@@ -242,10 +250,10 @@ public struct PatchEngine: Sendable {
         guard touchesProtectedPath else { return }
         // Protected paths are never auto-writable by the agent; they require both an
         // explicit permission decision and a user-confirmed UI apply path.
+        let permission = options.permissionDecision?.permission
         guard options.allowProtectedPaths,
-              options.confirmedByUser,
-              let permission = options.permissionDecision?.permission,
-              permission == .ask || permission == .review else {
+              (options.confirmedByUser || permission == .automatic),
+              permission == .ask || permission == .review || permission == .automatic else {
             throw PatchEngineError.protectedPathRequiresConfirmation(paths.joined(separator: ", "))
         }
     }

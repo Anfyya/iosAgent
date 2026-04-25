@@ -5,13 +5,19 @@ import UniformTypeIdentifiers
 struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var newWorkspaceName = ""
+    @State private var showCreateProjectSheet = false
+    @State private var showGitHubProjectSheet = false
+    @State private var gitHubProjectURL = ""
     @State private var showProviderEditor = false
     @State private var editingProvider: ProviderProfile?
     @State private var providerAPIKey = ""
     @State private var renameWorkspace: Workspace?
     @State private var renameWorkspaceName = ""
+    @State private var pendingDeleteProject: Workspace?
     @State private var newItemPath = ""
     @State private var newFolderPath = ""
+    @State private var showNewFileSheet = false
+    @State private var showNewFolderSheet = false
     @State private var renamePathValue = ""
     @State private var showFileImporter = false
     @State private var showZipImporter = false
@@ -22,30 +28,15 @@ struct RootView: View {
             projectsView
                 .tabItem { Label(AppTab.projects.title, systemImage: AppTab.projects.systemImage) }
                 .tag(AppTab.projects)
-            workspaceView
-                .tabItem { Label(AppTab.workspace.title, systemImage: AppTab.workspace.systemImage) }
-                .tag(AppTab.workspace)
             chatView
                 .tabItem { Label(AppTab.chat.title, systemImage: AppTab.chat.systemImage) }
                 .tag(AppTab.chat)
-            patchesView
-                .tabItem { Label(AppTab.patches.title, systemImage: AppTab.patches.systemImage) }
-                .tag(AppTab.patches)
-            contextView
-                .tabItem { Label(AppTab.context.title, systemImage: AppTab.context.systemImage) }
-                .tag(AppTab.context)
-            cacheView
-                .tabItem { Label(AppTab.cache.title, systemImage: AppTab.cache.systemImage) }
-                .tag(AppTab.cache)
             githubView
                 .tabItem { Label(AppTab.github.title, systemImage: AppTab.github.systemImage) }
                 .tag(AppTab.github)
             settingsView
                 .tabItem { Label(AppTab.settings.title, systemImage: AppTab.settings.systemImage) }
                 .tag(AppTab.settings)
-            logsView
-                .tabItem { Label(AppTab.logs.title, systemImage: AppTab.logs.systemImage) }
-                .tag(AppTab.logs)
         }
         .alert("错误", isPresented: .constant(model.lastErrorMessage != nil), actions: {
             Button("确定") { model.lastErrorMessage = nil }
@@ -53,10 +44,12 @@ struct RootView: View {
             Text(model.lastErrorMessage ?? "")
         })
         .sheet(isPresented: $showProviderEditor) {
-            ProviderProfileEditorSheet(
-                profile: editingProvider ?? defaultProviderProfile(),
+            SimpleModelEditorSheet(
+                profile: editingProvider,
                 apiKey: providerAPIKey,
-                onSave: { profile, apiKey in
+                defaultReasoningEffort: model.selectedReasoningEffort,
+                onSave: { profile, apiKey, reasoningEffort in
+                    model.setReasoningEffort(reasoningEffort)
                     model.saveProvider(profile, apiKey: apiKey)
                     showProviderEditor = false
                     providerAPIKey = ""
@@ -69,13 +62,93 @@ struct RootView: View {
         .sheet(item: $renameWorkspace) { workspace in
             NavigationStack {
                 Form { TextField("名称", text: $renameWorkspaceName) }
-                    .navigationTitle("重命名工作区")
+                    .navigationTitle("重命名项目")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("取消") { renameWorkspace = nil } }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("保存") {
                                 model.renameWorkspace(workspace, to: renameWorkspaceName)
                                 renameWorkspace = nil
+                            }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showCreateProjectSheet) {
+            NavigationStack {
+                Form { TextField("项目名称", text: $newWorkspaceName) }
+                    .navigationTitle("添加空项目")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") { showCreateProjectSheet = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("创建") {
+                                model.createWorkspace(named: newWorkspaceName)
+                                newWorkspaceName = ""
+                                showCreateProjectSheet = false
+                            }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showGitHubProjectSheet) {
+            NavigationStack {
+                Form {
+                    TextField("GitHub 仓库 URL", text: $gitHubProjectURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("输入 github.com 仓库地址后，应用会创建本地项目并导入仓库内容。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .navigationTitle("从 GitHub 添加项目")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { showGitHubProjectSheet = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("导入") {
+                            let url = gitHubProjectURL
+                            Task { await model.importProjectFromGitHub(url) }
+                            gitHubProjectURL = ""
+                            showGitHubProjectSheet = false
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showNewFileSheet) {
+            NavigationStack {
+                Form { TextField("文件路径", text: $newItemPath) }
+                    .navigationTitle("新建文件")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") { showNewFileSheet = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("创建") {
+                                model.createFile(at: newItemPath)
+                                newItemPath = ""
+                                showNewFileSheet = false
+                            }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $showNewFolderSheet) {
+            NavigationStack {
+                Form { TextField("文件夹路径", text: $newFolderPath) }
+                    .navigationTitle("新建文件夹")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") { showNewFolderSheet = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("创建") {
+                                model.createFolder(at: newFolderPath)
+                                newFolderPath = ""
+                                showNewFolderSheet = false
                             }
                         }
                     }
@@ -98,57 +171,209 @@ struct RootView: View {
         }, message: {
             Text("当前文件有未保存的更改。")
         })
+        .confirmationDialog("删除文件？", isPresented: .constant(model.pendingDeletePath != nil), actions: {
+            Button("删除", role: .destructive) { model.deletePendingPath() }
+            Button("取消", role: .cancel) { model.pendingDeletePath = nil }
+        }, message: {
+            Text(model.pendingDeletePath ?? "")
+        })
+        .confirmationDialog("删除项目？", isPresented: .constant(pendingDeleteProject != nil), actions: {
+            if let project = pendingDeleteProject {
+                Button("删除", role: .destructive) {
+                    model.deleteWorkspace(project)
+                    pendingDeleteProject = nil
+                }
+            }
+            Button("取消", role: .cancel) { pendingDeleteProject = nil }
+        }, message: {
+            Text(pendingDeleteProject?.name ?? "")
+        })
+        .sheet(isPresented: .constant(model.pendingRenamePath != nil), onDismiss: { model.pendingRenamePath = nil }) {
+            NavigationStack {
+                Form { TextField("新路径", text: $renamePathValue) }
+                    .navigationTitle("重命名文件")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("取消") { model.pendingRenamePath = nil } }
+                        ToolbarItem(placement: .confirmationAction) { Button("保存") { model.renameSelectedPath(to: renamePathValue) } }
+                    }
+            }
+        }
     }
 
     private var projectsView: some View {
         NavigationStack {
             List {
-                Section("创建工作区") {
-                    TextField("工作区名称", text: $newWorkspaceName)
-                    Button("创建") {
-                        model.createWorkspace(named: newWorkspaceName)
-                        newWorkspaceName = ""
+                Section("项目") {
+                    if model.workspaces.isEmpty {
+                        ContentUnavailableView("还没有项目", systemImage: "folder")
                     }
-                }
-                Section("工作区") {
                     ForEach(model.workspaces) { workspace in
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(workspace.name)
-                                            .font(.headline)
-                                        Text(workspace.rootPath)
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if model.selectedWorkspaceID == workspace.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.green)
-                                    }
-                                }
-                                HStack {
-                                    Button("打开") {
-                                        model.selectedWorkspaceID = workspace.id
-                                        model.refreshWorkspaceState()
-                                        model.selectedTab = .workspace
-                                    }
-                                    Button("重命名") {
-                                        renameWorkspace = workspace
-                                        renameWorkspaceName = workspace.name
-                                    }
-                                    Button("删除", role: .destructive) {
-                                        model.deleteWorkspace(workspace)
-                                    }
-                                }
-                                .font(.caption)
-                            }
+                        NavigationLink(value: workspace.id) {
+                            projectRow(for: workspace)
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            model.selectedWorkspaceID = workspace.id
+                            model.refreshWorkspaceState()
+                        })
                     }
                 }
             }
             .navigationTitle("项目")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("添加空项目") { showCreateProjectSheet = true }
+                        Button("从 GitHub 添加项目") { showGitHubProjectSheet = true }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .navigationDestination(for: UUID.self) { projectID in
+                projectDetailView(projectID: projectID)
+            }
+        }
+    }
+
+    private func projectRow(for workspace: Workspace) -> some View {
+        GlassPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(workspace.name)
+                            .font(.headline)
+                        Text(workspace.rootPath)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.selectedWorkspaceID == workspace.id {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+                HStack(spacing: 8) {
+                    if let provider = model.activeProvider {
+                        labelCapsule(title: provider.name)
+                    }
+                    if workspace.id == model.selectedWorkspaceID, let remote = model.githubRemoteConfig {
+                        labelCapsule(title: "\(remote.owner)/\(remote.repo)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func projectDetailView(projectID: UUID) -> some View {
+        Group {
+            if let project = model.workspaces.first(where: { $0.id == projectID }) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        GlassPanel {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(project.name)
+                                    .font(.title2.bold())
+                                Text(project.rootPath)
+                                    .font(.footnote.monospaced())
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    if let provider = model.activeProvider {
+                                        labelCapsule(title: provider.name)
+                                    }
+                                    if let remote = model.githubRemoteConfig {
+                                        labelCapsule(title: "\(remote.owner)/\(remote.repo)@\(remote.branch)")
+                                    }
+                                }
+                            }
+                        }
+
+                        HStack {
+                            TextField("按路径筛选文件", text: $model.fileSearchQuery)
+                                .textFieldStyle(.roundedBorder)
+                            Button("刷新") { model.refreshWorkspaceState() }
+                        }
+
+                        if let importStatusMessage = model.importStatusMessage {
+                            Text(importStatusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("文件")
+                                .font(.headline)
+                            FileTreeList(entries: model.filteredWorkspaceFiles) { path in
+                                model.requestOpenFile(path)
+                            } onDelete: { path in
+                                model.pendingDeletePath = path
+                            } onRename: { path in
+                                model.pendingRenamePath = path
+                                renamePathValue = path
+                            }
+                            .frame(minHeight: 260)
+                        }
+
+                        editorPanel
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                TextField("搜索内容", text: $model.contentSearchQuery)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("搜索") { model.searchContent() }
+                            }
+                            ForEach(model.contentSearchResults, id: \.self) { match in
+                                Button {
+                                    model.requestOpenFile(match.path)
+                                } label: {
+                                    GlassPanel {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("\(match.path):\(match.lineNumber)")
+                                                .font(.caption.monospaced())
+                                            Text(match.line)
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding()
+                }
+                .navigationTitle(project.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .task(id: projectID) {
+                    if model.selectedWorkspaceID != projectID {
+                        model.selectedWorkspaceID = projectID
+                        model.refreshWorkspaceState()
+                    }
+                }
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Menu {
+                            Button("新建文件") { showNewFileSheet = true }
+                            Button("新建文件夹") { showNewFolderSheet = true }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        Menu {
+                            Button("导入文件") { showFileImporter = true }
+                            Button("导入 ZIP") { showZipImporter = true }
+                            Button("重命名项目") {
+                                renameWorkspace = project
+                                renameWorkspaceName = project.name
+                            }
+                            Button("删除项目", role: .destructive) {
+                                pendingDeleteProject = project
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+            } else {
+                ContentUnavailableView("项目不存在", systemImage: "folder.badge.questionmark")
+            }
         }
     }
 
@@ -242,12 +467,12 @@ struct RootView: View {
                             }
                         }
                     } else {
-                        ContentUnavailableView("没有工作区", systemImage: "folder.badge.questionmark")
+                        ContentUnavailableView("没有项目", systemImage: "folder.badge.questionmark")
                     }
                 }
                 .padding()
             }
-            .navigationTitle("工作区")
+            .navigationTitle("项目")
             .confirmationDialog("删除项目？", isPresented: .constant(model.pendingDeletePath != nil), actions: {
                 Button("删除", role: .destructive) { model.deletePendingPath() }
                 Button("取消", role: .cancel) { model.pendingDeletePath = nil }
@@ -306,61 +531,168 @@ struct RootView: View {
 
     private var chatView: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    TextField("描述当前工作区要处理的任务", text: $model.chatInput, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                    Button("开始任务") {
-                        Task { await model.startChat() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    if let run = model.currentRun {
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("状态：\(agentRunStatusText(run.status))")
-                                    .font(.headline)
-                                if let answer = run.finalAnswer, answer.isEmpty == false {
-                                    Text(answer)
+            VStack(spacing: 0) {
+                if model.selectedWorkspace == nil {
+                    Spacer()
+                    ContentUnavailableView("请先选择项目", systemImage: "folder")
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            if let run = model.currentRun {
+                                ForEach(chatBubbleItems(for: run)) { item in
+                                    ChatBubble(item: item)
                                 }
-                                if run.toolCalls.isEmpty == false {
-                                    Text("工具：\(run.toolCalls.map(\.name).joined(separator: ", "))")
-                                        .font(.caption)
-                                }
-                            }
-                        }
-                        if run.status == .waitingForUser, let question = run.pendingQuestion?.arguments["question"]?.stringDescription {
-                            GlassPanel {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(question)
-                                        .font(.headline)
-                                    TextField("你的回答", text: $model.questionAnswer)
-                                        .textFieldStyle(.roundedBorder)
-                                    Button("发送回答") { Task { await model.answerQuestion() } }
+                            } else {
+                                GlassPanel {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("开始新对话")
+                                            .font(.headline)
+                                        Text("选择模型和思考强度后，在底部输入任务。")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
-                        }
-                        if run.status == .waitingForPermission, let request = run.pendingPermissionRequest {
-                            GlassPanel {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("权限请求：\(request.name)")
-                                        .font(.headline)
-                                    Text(run.pendingPermissionDecision?.reason ?? "")
-                                        .foregroundStyle(.secondary)
-                                    Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
-                                        .font(.caption.monospaced())
-                                    HStack {
-                                        Button("允许一次") { Task { await model.resumePermission(approved: true) } }
-                                        Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
+                            if let run = model.currentRun, run.status == .running {
+                                Text("模型正在处理…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let run = model.currentRun,
+                               run.status == .waitingForUser,
+                               let question = run.pendingQuestion?.arguments["question"]?.stringDescription {
+                                GlassPanel {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("需要你补充信息")
+                                            .font(.headline)
+                                        Text(question)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            if let run = model.currentRun,
+                               run.status == .waitingForPermission,
+                               let request = run.pendingPermissionRequest {
+                                GlassPanel {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("操作确认")
+                                            .font(.headline)
+                                        Text(run.pendingPermissionDecision?.reason ?? "")
+                                            .foregroundStyle(.secondary)
+                                        Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
+                                            .font(.caption.monospaced())
+                                        HStack {
+                                            Button("允许一次") { Task { await model.resumePermission(approved: true) } }
+                                            Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
+                                        }
                                     }
                                 }
                             }
                         }
+                        .padding()
                     }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                Menu {
+                                    ForEach(model.providerProfiles) { profile in
+                                        Button {
+                                            model.assignProvider(profile.id)
+                                        } label: {
+                                            if model.activeProvider?.id == profile.id {
+                                                Label(profile.name, systemImage: "checkmark")
+                                            } else {
+                                                Text(profile.name)
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    labelCapsule(title: model.activeProvider?.name ?? "选择模型")
+                                }
+
+                                if model.activeModel?.supportsReasoning == true {
+                                    Menu {
+                                        ForEach(ReasoningEffortPreset.allCases) { effort in
+                                            Button {
+                                                model.setReasoningEffort(effort)
+                                            } label: {
+                                                if model.selectedReasoningEffort == effort {
+                                                    Label(effort.title, systemImage: "checkmark")
+                                                } else {
+                                                    Text(effort.title)
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        labelCapsule(title: "思考 \(model.selectedReasoningEffort.title)")
+                                    }
+                                }
+                            }
+                        }
+
+                        HStack(alignment: .bottom, spacing: 10) {
+                            TextField("输入消息", text: $model.chatInput, axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .lineLimit(1 ... 6)
+                            Button {
+                                Task { await sendChatInput() }
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 30))
+                            }
+                            .disabled(model.chatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.selectedWorkspace == nil || model.currentRun?.status == .waitingForPermission)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+                    .background(.ultraThinMaterial)
                 }
-                .padding()
             }
-            .navigationTitle("对话")
+            .navigationTitle(model.selectedWorkspace?.name ?? "对话")
         }
+    }
+
+    private func sendChatInput() async {
+        let draft = model.chatInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard draft.isEmpty == false else { return }
+        if model.currentRun?.status == .waitingForUser {
+            model.questionAnswer = draft
+            await model.answerQuestion()
+        } else {
+            await model.startChat()
+        }
+        if model.lastErrorMessage == nil {
+            model.chatInput = ""
+        }
+    }
+
+    private func chatBubbleItems(for run: AgentRun) -> [ChatBubbleItem] {
+        run.messages.compactMap { message in
+            guard message.role == "user" || message.role == "assistant" else { return nil }
+            if message.role == "assistant", message.content.isEmpty, let toolCalls = message.toolCalls, toolCalls.isEmpty == false {
+                return ChatBubbleItem(
+                    role: .assistant,
+                    text: "调用工具：\(toolCalls.map(\.name).joined(separator: ", "))",
+                    secondaryText: message.reasoningContent
+                )
+            }
+            return ChatBubbleItem(
+                role: message.role == "user" ? .user : .assistant,
+                text: message.content,
+                secondaryText: message.reasoningContent
+            )
+        }
+    }
+
+    private func labelCapsule(title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.thinMaterial, in: Capsule())
     }
 
     private var patchesView: some View {
@@ -589,6 +921,8 @@ struct RootView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("创建拉取请求").font(.headline)
                                 TextField("标题", text: $model.pullRequestTitle)
+                                TextField("Head 分支", text: $model.pullRequestHeadBranch)
+                                TextField("Base 分支", text: $model.pullRequestBaseBranch)
                                 TextField("正文", text: $model.pullRequestBody, axis: .vertical)
                                 Button("创建拉取请求") { Task { await model.createPullRequest() } }
                             }
@@ -611,6 +945,9 @@ struct RootView: View {
                                 TextField("工作流 ID 或文件名", text: $model.selectedWorkflowIdentifier)
                                 TextField("引用分支或标签", text: $model.selectedWorkflowRef)
                                 TextField("输入 JSON", text: $model.workflowInputsText, axis: .vertical)
+                                Text("输入格式必须是 JSON 对象，例如 {\"scheme\":\"App\"}。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 Button("触发工作流") { Task { await model.dispatchWorkflow() } }
                                 ForEach(model.githubWorkflows) { workflow in
                                     VStack(alignment: .leading, spacing: 2) {
@@ -646,12 +983,25 @@ struct RootView: View {
                                         Text("大小=\(artifact.sizeInBytes) · \(artifact.archiveDownloadURL)")
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
+                                        Button("下载到本地") {
+                                            Task { await model.downloadArtifact(artifact) }
+                                        }
+                                        .disabled(artifact.expired)
+                                        if let downloadURL = URL(string: artifact.browserDownloadURL ?? artifact.archiveDownloadURL) {
+                                            Link("打开产物下载地址", destination: downloadURL)
+                                                .font(.caption)
+                                        }
+                                        if artifact.expired {
+                                            Text("该产物已过期，无法下载。")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                 }
                             }
                         }
                     } else {
-                        ContentUnavailableView("请先选择工作区", systemImage: "arrow.triangle.branch")
+                        ContentUnavailableView("请先选择项目", systemImage: "arrow.triangle.branch")
                     }
                 }
                 .padding()
@@ -663,12 +1013,23 @@ struct RootView: View {
     private var settingsView: some View {
         NavigationStack {
             List {
-                Section("模型服务配置") {
+                Section("模型") {
                     ForEach(model.providerProfiles) { profile in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(profile.name)
+                            HStack {
+                                Text(profile.name)
+                                Spacer()
+                                if model.activeProvider?.id == profile.id {
+                                    Text("当前使用")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Text(profile.baseURL)
                                 .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(profile.modelProfiles.first?.id ?? "")
+                                .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                             HStack {
                                 Button("编辑") {
@@ -677,28 +1038,50 @@ struct RootView: View {
                                     showProviderEditor = true
                                 }
                                 Button("使用") { model.assignProvider(profile.id) }
-                                Button("导出") { model.exportProvider(profile) }
-                                Button("删除", role: .destructive) { model.deleteProvider(profile, deleteSecret: false) }
+                                Button("测试") { Task { await model.testConnection(profile: profile, apiKey: nil) } }
+                                Button("删除", role: .destructive) { model.deleteProvider(profile, deleteSecret: true) }
                             }
                             .font(.caption)
                         }
                     }
-                    Button("添加服务") {
+                    Button("添加模型") {
                         editingProvider = nil
                         providerAPIKey = ""
                         showProviderEditor = true
                     }
                 }
-                Section("服务导入 / 导出") {
-                    TextEditor(text: $model.providerImportJSON)
-                        .frame(minHeight: 120)
-                    Button("导入服务 JSON") { model.importProviderProfileJSON() }
-                    if model.providerExportJSON.isEmpty == false {
-                        TextEditor(text: $model.providerExportJSON)
-                            .frame(minHeight: 180)
-                            .font(.caption.monospaced())
+
+                Section("模型权限") {
+                    Picker(
+                        "权限模式",
+                        selection: Binding(
+                            get: { model.appPreferences.permissionMode },
+                            set: { model.setPermissionMode($0) }
+                        )
+                    ) {
+                        ForEach(ModelPermissionMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(model.appPreferences.permissionMode.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Picker(
+                        "默认思考强度",
+                        selection: Binding(
+                            get: { model.selectedReasoningEffort },
+                            set: { model.setReasoningEffort($0) }
+                        )
+                    ) {
+                        ForEach(ReasoningEffortPreset.allCases) { effort in
+                            Text(effort.title).tag(effort)
+                        }
                     }
                 }
+
                 if let status = model.lastConnectionStatus {
                     Section("连接") { Text(status) }
                 }

@@ -232,10 +232,16 @@ public struct ProviderProfile: Identifiable, Codable, Hashable, Sendable {
 public struct AIMessage: Codable, Hashable, Sendable {
     public var role: String
     public var content: String
+    public var toolCallID: String?
+    public var toolCalls: [ToolCall]?
+    public var reasoningContent: String?
 
-    public init(role: String, content: String) {
+    public init(role: String, content: String, toolCallID: String? = nil, toolCalls: [ToolCall]? = nil, reasoningContent: String? = nil) {
         self.role = role
         self.content = content
+        self.toolCallID = toolCallID
+        self.toolCalls = toolCalls
+        self.reasoningContent = reasoningContent
     }
 }
 
@@ -303,13 +309,29 @@ public struct AIRequest: Codable, Hashable, Sendable {
 
 public struct ToolCall: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
+    public var externalID: String?
     public var name: String
     public var arguments: [String: JSONValue]
 
-    public init(id: UUID = UUID(), name: String, arguments: [String: JSONValue]) {
+    public init(id: UUID = UUID(), externalID: String? = nil, name: String, arguments: [String: JSONValue]) {
         self.id = id
+        self.externalID = externalID
         self.name = name
         self.arguments = arguments
+    }
+}
+
+public struct AgentRequestOptions: Codable, Hashable, Sendable {
+    public var toolChoice: String?
+    public var reasoning: ReasoningConfiguration?
+    public var maxTokens: Int?
+    public var extraParameters: [String: JSONValue]
+
+    public init(toolChoice: String? = "auto", reasoning: ReasoningConfiguration? = nil, maxTokens: Int? = nil, extraParameters: [String: JSONValue] = [:]) {
+        self.toolChoice = toolChoice
+        self.reasoning = reasoning
+        self.maxTokens = maxTokens
+        self.extraParameters = extraParameters
     }
 }
 

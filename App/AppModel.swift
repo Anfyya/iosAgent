@@ -6,6 +6,7 @@ import SwiftUI
 final class AppModel: ObservableObject {
     @Published var workspaces: [Workspace] = []
     @Published var providerProfiles: [ProviderProfile] = []
+    @Published var appPreferences = AppPreferences()
     @Published var selectedWorkspaceID: Workspace.ID?
     @Published var selectedTab: AppTab = .projects
     @Published var workspaceFiles: [WorkspaceFileEntry] = []
@@ -23,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var lastConnectionStatus: String?
     @Published var lastErrorMessage: String?
     @Published var chatInput = ""
+    @Published var selectedReasoningEffort: ReasoningEffortPreset = .high
     @Published var questionAnswer = ""
     @Published var fileSearchQuery = ""
     @Published var contentSearchQuery = ""
@@ -46,6 +48,8 @@ final class AppModel: ObservableObject {
     @Published var commitMessage = "通过本地工程助手更新"
     @Published var pullRequestTitle = ""
     @Published var pullRequestBody = ""
+    @Published var pullRequestHeadBranch = ""
+    @Published var pullRequestBaseBranch = ""
     @Published var selectedWorkflowIdentifier = ""
     @Published var selectedWorkflowRef = ""
     @Published var workflowInputsText = "{}"
@@ -58,19 +62,28 @@ final class AppModel: ObservableObject {
     private let aiClient: DefaultAIClient
     private let contextEngine = ContextEngine()
     private let cacheEngine = CacheEngine()
-    private let permissionManager = PermissionManager(globalMode: .semiAuto)
     private let promptBuilder = PromptBuilder()
     private let profilesURL: URL
+    private let preferencesURL: URL
     private let workspaceImportService: WorkspaceImportService
     private let buildConfigLoader: BuildConfigLoader
     private let githubSyncService: GitHubSyncService
+    private let gitHubProjectImportService: GitHubProjectImportService
+    private var lastLoadedWorkspaceID: UUID?
+
+    private var permissionManager: PermissionManager {
+        PermissionManager(
+            globalMode: appPreferences.permissionMode.globalPermissionMode,
+            toolPolicies: appPreferences.permissionMode.toolPolicies
+        )
+    }
 
     var selectedWorkspace: Workspace? {
         workspaces.first { $0.id == selectedWorkspaceID }
     }
 
     var activeProvider: ProviderProfile? {
-        guard let id = selectedWorkspace?.activeProviderProfileID else { return providerProfiles.first }
+        guard let id = appPreferences.selectedProviderID else { return providerProfiles.first }
         return providerProfiles.first { $0.id == id } ?? providerProfiles.first
     }
 
@@ -88,22 +101,44 @@ final class AppModel: ObservableObject {
         secretStore: any SecretStore = KeychainSecretStore(),
         aiClient: DefaultAIClient = DefaultAIClient()
     ) {
+        let startupErrorMessage: String?
         do {
             self.workspaceManager = try workspaceManager ?? WorkspaceManager()
-            profilesURL = FileManager.default
+            startupErrorMessage = nil
+            let documentsURL = FileManager.default
                 .urls(for: .documentDirectory, in: .userDomainMask)
                 .first?
-                .appendingPathComponent("ProviderProfiles/profiles.json") ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("profiles.json")
+                .appendingPathComponent("LocalAIWorkspace", isDirectory: true) ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("LocalAIWorkspace", isDirectory: true)
+            profilesURL = documentsURL.appendingPathComponent("ProviderProfiles/profiles.json")
+            preferencesURL = documentsURL.appendingPathComponent("Preferences/app_preferences.json")
         } catch {
-            fatalError("初始化工作区管理器失败：\(error.localizedDescription)")
+            startupErrorMessage = "初始化项目目录失败，已切换到临时目录：\(error.localizedDescription)"
+            let fallbackWorkspaceManager = try? WorkspaceManager(baseURL: FileManager.default.temporaryDirectory.appendingPathComponent("LocalAIWorkspaceFallback", isDirectory: true))
+            guard let fallbackWorkspaceManager else {
+                fatalError("初始化项目目录失败：\(error.localizedDescription)")
+            }
+            self.workspaceManager = fallbackWorkspaceManager
+            let documentsURL = FileManager.default.temporaryDirectory.appendingPathComponent("LocalAIWorkspace", isDirectory: true)
+            profilesURL = documentsURL.appendingPathComponent("ProviderProfiles/profiles.json")
+            preferencesURL = documentsURL.appendingPathComponent("Preferences/app_preferences.json")
         }
         self.secretStore = secretStore
         self.aiClient = aiClient
         workspaceImportService = WorkspaceImportService(workspaceManager: self.workspaceManager)
         buildConfigLoader = BuildConfigLoader(workspaceManager: self.workspaceManager)
         githubSyncService = GitHubSyncService(workspaceManager: self.workspaceManager, secretStore: secretStore)
+        gitHubProjectImportService = GitHubProjectImportService(
+            workspaceManager: self.workspaceManager,
+            workspaceImportService: workspaceImportService
+        )
+        loadPreferences()
         loadProfiles()
+        normalizeSelectedProvider()
+        selectedReasoningEffort = appPreferences.defaultReasoningEffort
         reloadWorkspaces()
+        if let startupErrorMessage {
+            lastErrorMessage = startupErrorMessage
+        }
     }
 
     func reloadWorkspaces(select workspaceID: UUID? = nil) {
@@ -122,7 +157,7 @@ final class AppModel: ObservableObject {
 
     func createWorkspace(named name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            lastErrorMessage = "工作区名称不能为空。"
+            lastErrorMessage = "项目名称不能为空。"
             return
         }
         do {
@@ -136,7 +171,7 @@ final class AppModel: ObservableObject {
 
     func renameWorkspace(_ workspace: Workspace, to name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            lastErrorMessage = "工作区名称不能为空。"
+            lastErrorMessage = "项目名称不能为空。"
             return
         }
         do {
@@ -165,12 +200,35 @@ final class AppModel: ObservableObject {
             cacheHistory = []
             cacheRecord = nil
             githubRemoteConfig = nil
+            githubRepository = nil
+            githubWorkflows = []
+            workflowRuns = []
+            workflowJobs = []
+            workflowArtifacts = []
+            commitSummary = nil
+            currentRun = nil
             auditEntries = []
             buildConfiguration = nil
+            lastLoadedWorkspaceID = nil
+            resetTransientProjectState()
             return
         }
         do {
             let current = try workspaceManager.openWorkspace(id: workspace.id)
+            let switchedWorkspace = lastLoadedWorkspaceID != current.id
+            lastLoadedWorkspaceID = current.id
+            if switchedWorkspace {
+                resetTransientProjectState()
+            }
+            githubRepository = nil
+            githubWorkflows = []
+            workflowRuns = []
+            workflowJobs = []
+            workflowArtifacts = []
+            commitSummary = nil
+            if currentRun?.workspaceID != current.id {
+                currentRun = nil
+            }
             if let index = workspaces.firstIndex(where: { $0.id == current.id }) {
                 workspaces[index] = current
             }
@@ -187,7 +245,15 @@ final class AppModel: ObservableObject {
                 remoteOwner = remote.owner
                 remoteRepo = remote.repo
                 remoteBranch = remote.branch
+                pullRequestHeadBranch = remote.branch
                 selectedWorkflowRef = remote.branch
+            } else {
+                remoteOwner = ""
+                remoteRepo = ""
+                remoteBranch = "main"
+                pullRequestHeadBranch = ""
+                pullRequestBaseBranch = ""
+                selectedWorkflowRef = ""
             }
             auditEntries = try auditStore(for: current.id).recent(limit: 100)
             if let path = selectedFilePath, workspaceFiles.contains(where: { $0.path == path }) {
@@ -210,9 +276,19 @@ final class AppModel: ObservableObject {
             } else {
                 try workspaceImportService.importDirectory(sourceURLs: urls, workspaceID: workspace.id)
             }
-            importStatusMessage = "已导入 \(result.importedCount) 个项目。\(result.warnings.joined(separator: " "))"
+            importStatusMessage = "已导入 \(result.importedCount) 个文件。\(result.warnings.joined(separator: " "))"
             refreshWorkspaceState()
             try log(action: isZip ? "zip_imported" : "files_imported", workspaceID: workspace.id, metadata: ["count": .integer(result.importedCount)])
+        } catch {
+            present(error)
+        }
+    }
+
+    func importProjectFromGitHub(_ repositoryURLString: String) async {
+        do {
+            let workspace = try await gitHubProjectImportService.importProject(from: repositoryURLString)
+            reloadWorkspaces(select: workspace.id)
+            try log(action: "github_project_imported", workspaceID: workspace.id, metadata: ["url": .string(repositoryURLString)])
         } catch {
             present(error)
         }
@@ -224,10 +300,11 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "新文件路径不能为空。"
             return
         }
-        updateFileSystem { fs in
+        if updateFileSystem({ fs in
             try fs.writeTextFile(path: trimmed, content: contents)
+        }) {
+            try? log(action: "file_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
         }
-        try? log(action: "file_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
     }
 
     func createFolder(at path: String) {
@@ -236,27 +313,37 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "新文件夹路径不能为空。"
             return
         }
-        updateFileSystem { fs in
+        if updateFileSystem({ fs in
             let url = try fs.safeURL(for: trimmed)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }) {
+            try? log(action: "folder_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
         }
-        try? log(action: "folder_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
     }
 
     func requestOpenFile(_ path: String) {
         guard hasUnsavedChanges, selectedFilePath != path else {
-            try? openFile(path)
+            do {
+                try openFile(path)
+            } catch {
+                present(error)
+            }
             return
         }
         pendingOpenFilePath = path
     }
 
     func resolvePendingFileOpen(saveChanges: Bool) {
-        if saveChanges {
-            saveSelectedFile()
+        if saveChanges, saveSelectedFile() == false {
+            return
         }
         if let path = pendingOpenFilePath {
-            try? openFile(path)
+            do {
+                try openFile(path)
+            } catch {
+                present(error)
+                return
+            }
         }
         pendingOpenFilePath = nil
     }
@@ -270,13 +357,17 @@ final class AppModel: ObservableObject {
         hasUnsavedChanges = false
     }
 
-    func saveSelectedFile() {
-        guard let path = selectedFilePath else { return }
-        updateFileSystem { fs in
+    @discardableResult
+    func saveSelectedFile() -> Bool {
+        guard let path = selectedFilePath else { return false }
+        let didSave = updateFileSystem { fs in
             try fs.writeTextFile(path: path, content: editorText)
         }
-        hasUnsavedChanges = false
-        try? log(action: "file_saved", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(path)])
+        if didSave {
+            hasUnsavedChanges = false
+            try? log(action: "file_saved", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(path)])
+        }
+        return didSave
     }
 
     func renameSelectedPath(to destination: String) {
@@ -286,25 +377,27 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "重命名路径不能为空。"
             return
         }
-        updateFileSystem { fs in
+        if updateFileSystem({ fs in
             try fs.moveItem(from: source, to: trimmed)
+        }) {
+            pendingRenamePath = nil
+            try? log(action: "file_renamed", workspaceID: selectedWorkspace?.id, metadata: ["from": .string(source), "to": .string(trimmed)])
         }
-        pendingRenamePath = nil
-        try? log(action: "file_renamed", workspaceID: selectedWorkspace?.id, metadata: ["from": .string(source), "to": .string(trimmed)])
     }
 
     func deletePendingPath() {
         guard let path = pendingDeletePath else { return }
-        updateFileSystem { fs in
+        if updateFileSystem({ fs in
             try fs.deleteItem(path: path)
+        }) {
+            if selectedFilePath == path {
+                selectedFilePath = nil
+                editorText = ""
+                hasUnsavedChanges = false
+            }
+            pendingDeletePath = nil
+            try? log(action: "file_deleted", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(path)])
         }
-        if selectedFilePath == path {
-            selectedFilePath = nil
-            editorText = ""
-            hasUnsavedChanges = false
-        }
-        pendingDeletePath = nil
-        try? log(action: "file_deleted", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(path)])
     }
 
     func searchContent() {
@@ -329,10 +422,9 @@ final class AppModel: ObservableObject {
             providerProfiles.append(mutable)
             providerProfiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             try persistProfiles()
-            if var workspace = selectedWorkspace, workspace.activeProviderProfileID == nil {
-                workspace.activeProviderProfileID = mutable.id
-                try workspaceManager.updateWorkspace(workspace)
-                reloadWorkspaces(select: workspace.id)
+            if appPreferences.selectedProviderID == nil || appPreferences.selectedProviderID == mutable.id {
+                appPreferences.selectedProviderID = mutable.id
+                try persistPreferences()
             }
             try log(action: "provider_saved", workspaceID: selectedWorkspace?.id, metadata: ["provider": .string(mutable.name)])
         } catch {
@@ -367,18 +459,45 @@ final class AppModel: ObservableObject {
                 try secretStore.delete(service: "LocalAIWorkspace.provider", account: reference)
             }
             providerProfiles.removeAll { $0.id == profile.id }
+            if providerProfiles.isEmpty {
+                providerProfiles = BuiltInModelProfiles.deepSeekDefaults()
+            }
             try persistProfiles()
+            if appPreferences.selectedProviderID == profile.id {
+                appPreferences.selectedProviderID = providerProfiles.first?.id
+                try persistPreferences()
+                lastConnectionStatus = providerProfiles.first.map { "当前模型已删除，已切换到 \($0.name)。" }
+            }
         } catch {
             present(error)
         }
     }
 
     func assignProvider(_ profileID: String?) {
-        guard var workspace = selectedWorkspace else { return }
-        workspace.activeProviderProfileID = profileID
         do {
-            try workspaceManager.updateWorkspace(workspace)
-            reloadWorkspaces(select: workspace.id)
+            appPreferences.selectedProviderID = profileID
+            try persistPreferences()
+            objectWillChange.send()
+        } catch {
+            present(error)
+        }
+    }
+
+    func setPermissionMode(_ mode: ModelPermissionMode) {
+        do {
+            appPreferences.permissionMode = mode
+            try persistPreferences()
+            objectWillChange.send()
+        } catch {
+            present(error)
+        }
+    }
+
+    func setReasoningEffort(_ effort: ReasoningEffortPreset) {
+        do {
+            selectedReasoningEffort = effort
+            appPreferences.defaultReasoningEffort = effort
+            try persistPreferences()
         } catch {
             present(error)
         }
@@ -403,7 +522,7 @@ final class AppModel: ObservableObject {
 
     func startChat() async {
         guard let workspace = selectedWorkspace else {
-            lastErrorMessage = "请先选择工作区。"
+            lastErrorMessage = "请先选择项目。"
             return
         }
         guard let profile = activeProvider, let model = activeModel else {
@@ -432,7 +551,8 @@ final class AppModel: ObservableObject {
                 systemPrompt: prompt.systemMessage,
                 userTask: chatInput,
                 initialMessages: prompt.messages,
-                contextRequest: makeContextRequest(for: workspace)
+                contextRequest: makeContextRequest(for: workspace),
+                requestOptions: agentRequestOptions(for: model)
             )
             try log(action: "chat_started", workspaceID: workspace.id, metadata: ["task": .string(chatInput)])
             handle(run: run, profile: profile, model: model, snapshot: snapshot)
@@ -446,7 +566,14 @@ final class AppModel: ObservableObject {
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace)
             let loop = try makeAgentLoop(for: workspace)
-            let updated = try await loop.resume(runID: run.id, answer: questionAnswer, profile: profile, apiKey: try apiKeyForProfile(profile), contextRequest: makeContextRequest(for: workspace))
+            let updated = try await loop.resume(
+                runID: run.id,
+                answer: questionAnswer,
+                profile: profile,
+                apiKey: try apiKeyForProfile(profile),
+                contextRequest: makeContextRequest(for: workspace),
+                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
+            )
             questionAnswer = ""
             if let model = activeModel {
                 handle(run: updated, profile: profile, model: model, snapshot: snapshot)
@@ -461,7 +588,14 @@ final class AppModel: ObservableObject {
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace)
             let loop = try makeAgentLoop(for: workspace)
-            let updated = try await loop.resumePermission(runID: run.id, approved: approved, profile: profile, apiKey: try apiKeyForProfile(profile), contextRequest: makeContextRequest(for: workspace))
+            let updated = try await loop.resumePermission(
+                runID: run.id,
+                approved: approved,
+                profile: profile,
+                apiKey: try apiKeyForProfile(profile),
+                contextRequest: makeContextRequest(for: workspace),
+                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
+            )
             try log(action: approved ? "permission_approved" : "permission_denied", workspaceID: workspace.id, metadata: ["tool": .string(run.pendingPermissionRequest?.name ?? "unknown")])
             if let model = activeModel {
                 handle(run: updated, profile: profile, model: model, snapshot: snapshot)
@@ -520,6 +654,7 @@ final class AppModel: ObservableObject {
         do {
             let remote = try await githubSyncService.linkRepository(workspaceID: workspace.id, owner: remoteOwner, repo: remoteRepo, branch: remoteBranch, token: remoteToken)
             githubRemoteConfig = remote
+            pullRequestHeadBranch = remote.branch
             githubStatusMessage = "已关联 \(remote.owner)/\(remote.repo)@\(remote.branch)"
             try log(action: "github_linked", workspaceID: workspace.id, metadata: ["repo": .string(remote.remoteURL)])
             remoteToken = ""
@@ -533,10 +668,19 @@ final class AppModel: ObservableObject {
         do {
             githubRepository = try await githubSyncService.getRepository(workspaceID: workspace.id)
             githubWorkflows = try await githubSyncService.listWorkflows(workspaceID: workspace.id)
+            if pullRequestBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                pullRequestBaseBranch = githubRepository?.defaultBranch ?? "main"
+            }
+            if selectedWorkflowIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                selectedWorkflowIdentifier = githubWorkflows.first?.path ?? ""
+            }
             workflowRuns = try await githubSyncService.listWorkflowRuns(workspaceID: workspace.id)
             if let run = workflowRuns.first {
                 workflowJobs = try await githubSyncService.listJobsForRun(workspaceID: workspace.id, runID: run.id)
                 workflowArtifacts = try await githubSyncService.listArtifactsForRun(workspaceID: workspace.id, runID: run.id)
+            } else {
+                workflowJobs = []
+                workflowArtifacts = []
             }
             buildConfiguration = try buildConfigLoader.load(workspaceID: workspace.id)
         } catch {
@@ -568,9 +712,15 @@ final class AppModel: ObservableObject {
 
     func createPullRequest() async {
         guard let workspace = selectedWorkspace, let remote = githubRemoteConfig else { return }
+        let normalizedTitle = pullRequestTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedTitle.isEmpty == false else {
+            lastErrorMessage = "拉取请求标题不能为空。"
+            return
+        }
         do {
-            let baseBranch = githubRepository?.defaultBranch ?? "main"
-            let url = try await githubSyncService.createPullRequest(workspaceID: workspace.id, title: pullRequestTitle, body: pullRequestBody, head: remote.branch, base: baseBranch)
+            let headBranch = pullRequestHeadBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? remote.branch : pullRequestHeadBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseBranch = pullRequestBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (githubRepository?.defaultBranch ?? "main") : pullRequestBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+            let url = try await githubSyncService.createPullRequest(workspaceID: workspace.id, title: normalizedTitle, body: pullRequestBody, head: headBranch, base: baseBranch)
             githubStatusMessage = "拉取请求已创建：\(url)"
             try log(action: "pull_request_created", workspaceID: workspace.id, metadata: ["url": .string(url)])
         } catch {
@@ -586,13 +736,24 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            let inputs = parseInputs(workflowInputsText)
+            let inputs = try parseInputs(workflowInputsText)
             let ref = build?.ref ?? (selectedWorkflowRef.isEmpty ? (githubRemoteConfig?.branch ?? "main") : selectedWorkflowRef)
             let dispatchInputs = (build?.inputs.isEmpty == false) ? (build?.inputs ?? [:]) : inputs
             try await githubSyncService.dispatchWorkflow(workspaceID: workspace.id, workflowIDOrFileName: workflow, ref: ref, inputs: dispatchInputs)
             githubStatusMessage = "工作流已触发：\(workflow)"
             try log(action: "workflow_dispatched", workspaceID: workspace.id, metadata: ["workflow": .string(workflow), "ref": .string(ref)])
             await refreshGitHubData()
+        } catch {
+            present(error)
+        }
+    }
+
+    func downloadArtifact(_ artifact: GitHubArtifact) async {
+        guard let workspace = selectedWorkspace else { return }
+        do {
+            let fileURL = try await githubSyncService.downloadArtifact(workspaceID: workspace.id, artifactID: artifact.id)
+            githubStatusMessage = "产物已下载到 \(fileURL.path)"
+            try log(action: "artifact_downloaded", workspaceID: workspace.id, metadata: ["artifact": .string(artifact.name), "path": .string(fileURL.path)])
         } catch {
             present(error)
         }
@@ -608,6 +769,7 @@ final class AppModel: ObservableObject {
                 cacheHistory = try store.list(workspaceID: nil)
                 cacheRecord = cacheHistory.first
             }
+            try autoApplyPendingPatches(for: run)
             refreshWorkspaceState()
         } catch {
             present(error)
@@ -633,12 +795,12 @@ final class AppModel: ObservableObject {
 
     private func makeContextRequest(for workspace: Workspace) -> ContextBuildRequest {
         ContextBuildRequest(
-            systemPrompt: "安全的本地优先 iOS 工作区助手。遵循稳定前缀块，并始终使用补丁审核流程。",
+            systemPrompt: "安全的本地优先 iOS 项目助手。遵循稳定前缀块，并且只允许修改当前项目内的文件。",
             toolSchemaText: SupportedTools.schemas.sorted(by: { $0.name < $1.name }).map { "\($0.name): \($0.description)" }.joined(separator: "\n"),
             permissionRules: makePermissionRules(),
-            projectRules: "只允许编辑 workspace/files 内的文件。不要访问 Keychain、API Key 或工作区外部路径。受保护路径和 GitHub 操作必须确认。",
-            dependencySummary: "SwiftUI App 壳 + LocalAIWorkspace 核心服务 + GitHub 同步/Actions + 上下文/缓存 + 补丁审核。",
-            aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch。",
+            projectRules: "只允许编辑当前项目目录内的文件。不要访问 Keychain、API Key 或项目外部路径。项目外文件永远不能修改。",
+            dependencySummary: "SwiftUI App 壳 + LocalAIWorkspace 核心服务 + GitHub 同步/Actions + 自动补丁应用权限流。",
+            aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch，并且只能修改当前项目内文件。",
             currentTask: chatInput,
             openedFiles: currentOpenedFiles(),
             relatedSnippets: contentSearchResults,
@@ -649,7 +811,19 @@ final class AppModel: ObservableObject {
     }
 
     private func makePermissionRules() -> String {
-        PermissionManager.defaultPolicies.values.sorted(by: { $0.toolName < $1.toolName }).map { "\($0.toolName): \($0.permission.rawValue)" }.joined(separator: "\n")
+        permissionManager.toolPolicies.values
+            .sorted(by: { $0.toolName < $1.toolName })
+            .map { "\($0.toolName): \($0.permission.rawValue)" }
+            .joined(separator: "\n")
+    }
+
+    private func agentRequestOptions(for model: ModelProfile) -> AgentRequestOptions {
+        AgentRequestOptions(
+            toolChoice: "auto",
+            reasoning: model.supportsReasoning ? ReasoningConfiguration(enabled: true, level: selectedReasoningEffort.rawValue) : nil,
+            maxTokens: nil,
+            extraParameters: model.extraParameters
+        )
     }
 
     private func buildAndPersistContextSnapshot(for workspace: Workspace) throws -> ContextSnapshot {
@@ -673,14 +847,17 @@ final class AppModel: ObservableObject {
         return try secretStore.read(service: "LocalAIWorkspace.provider", account: reference)
     }
 
-    private func updateFileSystem(_ operation: (WorkspaceFS) throws -> Void) {
-        guard let workspace = selectedWorkspace else { return }
+    @discardableResult
+    private func updateFileSystem(_ operation: (WorkspaceFS) throws -> Void) -> Bool {
+        guard let workspace = selectedWorkspace else { return false }
         do {
             let fs = try workspaceManager.workspaceFS(for: workspace)
             try operation(fs)
             refreshWorkspaceState()
+            return true
         } catch {
             present(error)
+            return false
         }
     }
 
@@ -700,23 +877,66 @@ final class AppModel: ObservableObject {
         FileAuditLogStore(storageURL: workspaceManager.mobiledevURL(for: workspaceID).appendingPathComponent("logs/audit.jsonl"))
     }
 
-    private func parseInputs(_ raw: String) -> [String: String] {
-        guard let data = raw.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return [:]
+    private func parseInputs(_ raw: String) throws -> [String: String] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return [:] }
+        guard let data = trimmed.data(using: .utf8) else {
+            throw WorkflowInputParseError.invalidJSON
         }
-        return object.reduce(into: [:]) { partial, item in
-            partial[item.key] = String(describing: item.value)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let dictionary = object as? [String: Any] else {
+            throw WorkflowInputParseError.topLevelMustBeObject
         }
+        return try dictionary.reduce(into: [:]) { partial, item in
+            switch item.value {
+            case let value as String:
+                partial[item.key] = value
+            case let value as Bool:
+                partial[item.key] = value ? "true" : "false"
+            case let value as NSNumber:
+                partial[item.key] = value.stringValue
+            case _ as NSNull:
+                partial[item.key] = ""
+            default:
+                throw WorkflowInputParseError.unsupportedValue(item.key)
+            }
+        }
+    }
+
+    private func resetTransientProjectState() {
+        importStatusMessage = nil
+        githubStatusMessage = nil
+        commitSummary = nil
+        pullRequestTitle = ""
+        pullRequestBody = ""
+        pullRequestHeadBranch = ""
+        pullRequestBaseBranch = ""
+        selectedWorkflowIdentifier = ""
+        selectedWorkflowRef = ""
+        workflowInputsText = "{}"
+        questionAnswer = ""
     }
 
     private func loadProfiles() {
         do {
             guard FileManager.default.fileExists(atPath: profilesURL.path) else {
-                providerProfiles = []
+                providerProfiles = BuiltInModelProfiles.deepSeekDefaults()
+                try persistProfiles()
                 return
             }
             providerProfiles = try JSONDecoder().decode([ProviderProfile].self, from: Data(contentsOf: profilesURL))
+        } catch {
+            present(error)
+        }
+    }
+
+    private func loadPreferences() {
+        do {
+            guard FileManager.default.fileExists(atPath: preferencesURL.path) else {
+                appPreferences = AppPreferences()
+                return
+            }
+            appPreferences = try JSONDecoder().decode(AppPreferences.self, from: Data(contentsOf: preferencesURL))
         } catch {
             present(error)
         }
@@ -728,6 +948,40 @@ final class AppModel: ObservableObject {
         try data.write(to: profilesURL, options: .atomic)
     }
 
+    private func persistPreferences() throws {
+        try FileManager.default.createDirectory(at: preferencesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder.pretty.encode(appPreferences)
+        try data.write(to: preferencesURL, options: .atomic)
+    }
+
+    private func normalizeSelectedProvider() {
+        guard providerProfiles.isEmpty == false else {
+            appPreferences.selectedProviderID = nil
+            return
+        }
+        if let selectedProviderID = appPreferences.selectedProviderID,
+           providerProfiles.contains(where: { $0.id == selectedProviderID }) {
+            return
+        }
+        appPreferences.selectedProviderID = providerProfiles.first?.id
+        try? persistPreferences()
+    }
+
+    private func autoApplyPendingPatches(for run: AgentRun) throws {
+        let proposals = try patchStore(for: run.workspaceID)
+            .list(workspaceID: run.workspaceID)
+            .filter {
+                $0.agentRunID == run.id && $0.status == .pendingReview
+            }
+        guard proposals.isEmpty == false else { return }
+        for proposal in proposals {
+            applyPatch(
+                proposal,
+                confirmedByUser: appPreferences.permissionMode == .readOnly
+            )
+        }
+    }
+
     private func log(action: String, workspaceID: UUID?, metadata: [String: JSONValue]) throws {
         guard let workspaceID else { return }
         try auditStore(for: workspaceID).append(AuditLogEntry(action: action, metadata: metadata))
@@ -736,6 +990,23 @@ final class AppModel: ObservableObject {
 
     private func present(_ error: Error) {
         lastErrorMessage = error.localizedDescription
+    }
+}
+
+private enum WorkflowInputParseError: LocalizedError {
+    case invalidJSON
+    case topLevelMustBeObject
+    case unsupportedValue(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidJSON:
+            return "工作流输入必须是合法 JSON。"
+        case .topLevelMustBeObject:
+            return "工作流输入必须是 JSON 对象，例如 {\"platform\":\"ios\"}。"
+        case let .unsupportedValue(key):
+            return "工作流输入字段 \(key) 只支持字符串、数字、布尔值或 null。"
+        }
     }
 }
 
@@ -755,7 +1026,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .projects: "项目"
-        case .workspace: "工作区"
+        case .workspace: "项目"
         case .chat: "对话"
         case .patches: "补丁审核"
         case .context: "上下文"

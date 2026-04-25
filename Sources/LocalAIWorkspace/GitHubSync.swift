@@ -10,6 +10,7 @@ public enum GitHubSyncError: Error, LocalizedError {
     case pushConfirmationRequired
     case protectedBranchRequiresSecondConfirmation(String)
     case pullRequestRequiresDifferentBranches(String)
+    case artifactExpired(Int)
     case repositoryRequestFailed(statusCode: Int, message: String)
     case invalidResponse
 
@@ -28,6 +29,8 @@ public enum GitHubSyncError: Error, LocalizedError {
             return "Pushing \(branch) requires a second confirmation."
         case let .pullRequestRequiresDifferentBranches(branch):
             return "Cannot create a pull request from \(branch) into the same branch. Choose a feature branch first."
+        case let .artifactExpired(artifactID):
+            return "Artifact \(artifactID) has expired and can no longer be downloaded."
         case let .repositoryRequestFailed(statusCode, message):
             return "GitHub request failed with status \(statusCode): \(message)"
         case .invalidResponse:
@@ -52,6 +55,7 @@ public protocol GitHubAPIClient: Sendable {
     func getWorkflowRun(owner: String, repo: String, runID: Int, token: String) async throws -> GitHubWorkflowRun
     func listJobsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubWorkflowJob]
     func listArtifactsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubArtifact]
+    func downloadArtifactArchive(owner: String, repo: String, artifactID: Int, token: String) async throws -> Data
 }
 
 public struct GitHubClient: GitHubAPIClient, Sendable {
@@ -151,6 +155,24 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
         return payload.artifacts.map {
             GitHubArtifact(id: $0.id, name: $0.name, sizeInBytes: $0.sizeInBytes, expired: $0.expired, archiveDownloadURL: $0.archiveDownloadURL, browserDownloadURL: $0.archiveDownloadURL)
         }
+    }
+
+    public func downloadArtifactArchive(owner: String, repo: String, artifactID: Int, token: String) async throws -> Data {
+        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/actions/artifacts/\(artifactID)/zip") else {
+            throw GitHubSyncError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200 ..< 300).contains(statusCode) else {
+            let message = (try? decoder.decode(GitHubErrorPayload.self, from: data).message) ?? String(decoding: data, as: UTF8.self)
+            throw GitHubSyncError.repositoryRequestFailed(statusCode: statusCode, message: message)
+        }
+        return data
     }
 
     private func send<Response: Decodable>(path: String, method: String = "GET", queryItems: [URLQueryItem] = [], token: String) async throws -> Response {
@@ -306,11 +328,12 @@ public struct GitHubSyncService: Sendable {
         let workspace = try workspaceManager.loadWorkspace(id: workspaceID)
         let fs = try workspaceManager.workspaceFS(for: workspace)
         let branchRef = try await client.getBranchRef(owner: remote.owner, repo: remote.repo, branch: remote.branch, token: token)
+        let baseTreeSHA = try await client.getGitCommitTreeSHA(owner: remote.owner, repo: remote.repo, commitSHA: branchRef.sha, token: token)
         let payload = try await buildTreePayload(workspaceFS: fs, remote: remote, token: token, includeBinaryFiles: includeBinaryFiles, includeLargeFiles: includeLargeFiles)
 
-        // Local workspace is the source of truth. Creating the tree without a base_tree
-        // makes remote files deleted locally disappear from the new commit as well.
-        let treeSHA = try await client.createTree(owner: remote.owner, repo: remote.repo, baseTree: nil, entries: payload.entries, token: token)
+        // Start from the current remote tree so manual pushes only update files we explicitly upload.
+        // This avoids deleting remote-only files when the local project is incomplete.
+        let treeSHA = try await client.createTree(owner: remote.owner, repo: remote.repo, baseTree: baseTreeSHA, entries: payload.entries, token: token)
         let commit = try await client.createCommit(owner: remote.owner, repo: remote.repo, message: message, treeSHA: treeSHA, parents: [branchRef.sha], token: token)
         return GitHubCommitSummary(remote: remote, headSHA: commit.sha, changedFiles: payload.changedFiles, skippedFiles: payload.skippedFiles, warnings: payload.warnings)
     }
@@ -373,6 +396,21 @@ public struct GitHubSyncService: Sendable {
             if let artifact = runArtifacts.first(where: { $0.id == artifactID }) { return artifact }
         }
         throw GitHubSyncError.invalidResponse
+    }
+
+    public func downloadArtifact(workspaceID: UUID, artifactID: Int) async throws -> URL {
+        let remote = try loadRemoteConfig(workspaceID: workspaceID)
+        let artifact = try await downloadArtifactMetadata(workspaceID: workspaceID, artifactID: artifactID)
+        guard artifact.expired == false else {
+            throw GitHubSyncError.artifactExpired(artifactID)
+        }
+        let archiveData = try await client.downloadArtifactArchive(owner: remote.owner, repo: remote.repo, artifactID: artifactID, token: try token(for: remote))
+        let downloadsURL = workspaceManager.mobiledevURL(for: workspaceID).appendingPathComponent("downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloadsURL, withIntermediateDirectories: true)
+        let sanitizedName = artifact.name.replacingOccurrences(of: "/", with: "-")
+        let fileURL = downloadsURL.appendingPathComponent("\(sanitizedName)-\(artifact.id).zip")
+        try archiveData.write(to: fileURL, options: .atomic)
+        return fileURL
     }
 
     private func scanLocalFiles(workspaceFS: WorkspaceFS, includeBinaryFiles: Bool, includeLargeFiles: Bool) throws -> (changedFiles: [GitHubFileSummary], skippedFiles: [GitHubFileSummary], warnings: [String]) {

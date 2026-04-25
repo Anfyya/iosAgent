@@ -80,7 +80,7 @@ public struct WorkspaceFS: Sendable {
     }
 
     public func listFiles() throws -> [WorkspaceFileEntry] {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .isHiddenKey]
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(at: rootURL, includingPropertiesForKeys: keys) else {
             throw WorkspaceFSError.invalidRoot
         }
@@ -88,7 +88,6 @@ public struct WorkspaceFS: Sendable {
         var entries: [WorkspaceFileEntry] = []
         for case let fileURL as URL in enumerator {
             let values = try fileURL.resourceValues(forKeys: Set(keys))
-            if values.isHidden == true { continue }
             let relativePath = try relativePath(for: fileURL)
             entries.append(
                 WorkspaceFileEntry(
