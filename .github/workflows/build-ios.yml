@@ -21,24 +21,6 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Patch recursive SwiftUI helper
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('App/RootView.swift')
-          s = p.read_text()
-          a = s.index('    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {')
-          b = s.index('\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {', a)
-          block = s[a:b]
-          block = block.replace('    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {', '    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {')
-          block = block.replace('        VStack(alignment: .leading, spacing: 2) {', '        AnyView(VStack(alignment: .leading, spacing: 2) {', 1)
-          block = block.rstrip()
-          if not block.endswith('\n    }'):
-              raise SystemExit('unexpected nodeView shape')
-          block = block[:-6] + '\n        )\n    }\n'
-          p.write_text(s[:a] + block + s[b:])
-          PY
-
       - name: Generate project
         run: xcodegen generate
 
