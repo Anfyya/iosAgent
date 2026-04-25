@@ -111,7 +111,7 @@ public struct WorkspaceImportService: Sendable {
         }
 
         for case let extractedURL as URL in enumerator {
-            let relativePath = extractedURL.path.replacingOccurrences(of: extractionRoot.path + "/", with: "")
+            let relativePath = try extractedURL.resolvedRelativePath(from: extractionRoot)
             guard shouldImport(relativePath: relativePath) else {
                 items.append(ImportedItemResult(sourcePath: relativePath, status: .skipped, message: "Ignored by import rules."))
                 continue
@@ -136,7 +136,7 @@ public struct WorkspaceImportService: Sendable {
         var warnings: [String] = []
         for case let itemURL as URL in enumerator {
             let values = try itemURL.resourceValues(forKeys: [.isDirectoryKey])
-            let relativePath = itemURL.path.replacingOccurrences(of: sourceURL.path + "/", with: "")
+            let relativePath = try itemURL.resolvedRelativePath(from: sourceURL)
             guard shouldImport(relativePath: relativePath) else {
                 items.append(ImportedItemResult(sourcePath: relativePath, status: .skipped, message: "Ignored by import rules."))
                 continue
@@ -160,7 +160,7 @@ public struct WorkspaceImportService: Sendable {
     private func copyItem(sourceURL: URL, relativeDestinationPath: String, fs: WorkspaceFS, conflictPolicy: ImportConflictPolicy) throws -> ImportedItemResult {
         let sanitizedPath = try sanitizedRelativePath(relativeDestinationPath)
         let destinationURL = try resolvedDestinationURL(for: sanitizedPath, fs: fs, conflictPolicy: conflictPolicy)
-        let destinationPath = destinationURL.path.replacingOccurrences(of: fs.rootURL.path + "/", with: "")
+        let destinationPath = try destinationURL.resolvedRelativePath(from: fs.rootURL)
         let existed = FileManager.default.fileExists(atPath: destinationURL.path)
 
         try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -444,5 +444,15 @@ private extension URL {
         #if canImport(UIKit)
         stopAccessingSecurityScopedResource()
         #endif
+    }
+
+    func resolvedRelativePath(from rootURL: URL) throws -> String {
+        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let path = standardizedFileURL.resolvingSymlinksInPath().path
+        guard path == rootPath || path.hasPrefix(rootPath + "/") else {
+            throw WorkspaceImportError.invalidDestinationPath(path)
+        }
+        guard path != rootPath else { return "" }
+        return String(path.dropFirst(rootPath.count + 1))
     }
 }

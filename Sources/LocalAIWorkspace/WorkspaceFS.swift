@@ -89,7 +89,7 @@ public struct WorkspaceFS: Sendable {
         for case let fileURL as URL in enumerator {
             let values = try fileURL.resourceValues(forKeys: Set(keys))
             if values.isHidden == true { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+            let relativePath = try relativePath(for: fileURL)
             entries.append(
                 WorkspaceFileEntry(
                     path: relativePath,
@@ -160,6 +160,16 @@ public struct WorkspaceFS: Sendable {
 
     private func isBinary(data: Data) -> Bool {
         data.prefix(512).contains(0)
+    }
+
+    private func relativePath(for fileURL: URL) throws -> String {
+        let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let filePath = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        guard filePath == rootPath || filePath.hasPrefix(rootPath + "/") else {
+            throw WorkspaceFSError.outsideWorkspace
+        }
+        guard filePath != rootPath else { return "" }
+        return String(filePath.dropFirst(rootPath.count + 1))
     }
 
     private func isWithinRoot(_ candidate: URL) -> Bool {
