@@ -22,13 +22,18 @@ targets:
       base:
         PRODUCT_NAME: LocalAIWorkspaceApp
         PRODUCT_BUNDLE_IDENTIFIER: com.anfyya.LocalAIWorkspace
+        MARKETING_VERSION: "0.5"
+        CURRENT_PROJECT_VERSION: "5"
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: LocalAIWorkspace
+        INFOPLIST_KEY_CFBundleDisplayName: 本地工程助手
+        INFOPLIST_KEY_CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        INFOPLIST_KEY_CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleDefault
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
 schemes:
   LocalAIWorkspaceApp:

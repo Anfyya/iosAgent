@@ -47,8 +47,8 @@ struct RootView: View {
                 .tabItem { Label(AppTab.logs.title, systemImage: AppTab.logs.systemImage) }
                 .tag(AppTab.logs)
         }
-        .alert("Error", isPresented: .constant(model.lastErrorMessage != nil), actions: {
-            Button("OK") { model.lastErrorMessage = nil }
+        .alert("错误", isPresented: .constant(model.lastErrorMessage != nil), actions: {
+            Button("确定") { model.lastErrorMessage = nil }
         }, message: {
             Text(model.lastErrorMessage ?? "")
         })
@@ -68,12 +68,12 @@ struct RootView: View {
         }
         .sheet(item: $renameWorkspace) { workspace in
             NavigationStack {
-                Form { TextField("Name", text: $renameWorkspaceName) }
-                    .navigationTitle("Rename Workspace")
+                Form { TextField("名称", text: $renameWorkspaceName) }
+                    .navigationTitle("重命名工作区")
                     .toolbar {
-                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { renameWorkspace = nil } }
+                        ToolbarItem(placement: .cancellationAction) { Button("取消") { renameWorkspace = nil } }
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
+                            Button("保存") {
                                 model.renameWorkspace(workspace, to: renameWorkspaceName)
                                 renameWorkspace = nil
                             }
@@ -91,26 +91,26 @@ struct RootView: View {
                 model.importFiles(from: [first], isZip: true)
             }
         }
-        .confirmationDialog("Open another file?", isPresented: .constant(model.pendingOpenFilePath != nil), actions: {
-            Button("Save and Open") { model.resolvePendingFileOpen(saveChanges: true) }
-            Button("Discard Changes") { model.resolvePendingFileOpen(saveChanges: false) }
-            Button("Cancel", role: .cancel) { model.pendingOpenFilePath = nil }
+        .confirmationDialog("打开其他文件？", isPresented: .constant(model.pendingOpenFilePath != nil), actions: {
+            Button("保存并打开") { model.resolvePendingFileOpen(saveChanges: true) }
+            Button("放弃更改") { model.resolvePendingFileOpen(saveChanges: false) }
+            Button("取消", role: .cancel) { model.pendingOpenFilePath = nil }
         }, message: {
-            Text("You have unsaved changes.")
+            Text("当前文件有未保存的更改。")
         })
     }
 
     private var projectsView: some View {
         NavigationStack {
             List {
-                Section("Create Workspace") {
-                    TextField("Workspace name", text: $newWorkspaceName)
-                    Button("Create") {
+                Section("创建工作区") {
+                    TextField("工作区名称", text: $newWorkspaceName)
+                    Button("创建") {
                         model.createWorkspace(named: newWorkspaceName)
                         newWorkspaceName = ""
                     }
                 }
-                Section("Workspaces") {
+                Section("工作区") {
                     ForEach(model.workspaces) { workspace in
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
@@ -129,16 +129,16 @@ struct RootView: View {
                                     }
                                 }
                                 HStack {
-                                    Button("Open") {
+                                    Button("打开") {
                                         model.selectedWorkspaceID = workspace.id
                                         model.refreshWorkspaceState()
                                         model.selectedTab = .workspace
                                     }
-                                    Button("Rename") {
+                                    Button("重命名") {
                                         renameWorkspace = workspace
                                         renameWorkspaceName = workspace.name
                                     }
-                                    Button("Delete", role: .destructive) {
+                                    Button("删除", role: .destructive) {
                                         model.deleteWorkspace(workspace)
                                     }
                                 }
@@ -148,7 +148,7 @@ struct RootView: View {
                     }
                 }
             }
-            .navigationTitle("Projects")
+            .navigationTitle("项目")
         }
     }
 
@@ -165,7 +165,7 @@ struct RootView: View {
                                     .font(.footnote.monospaced())
                                     .foregroundStyle(.secondary)
                                 HStack {
-                                    if let provider = model.activeProvider { Text("Provider: \(provider.name)") }
+                                    if let provider = model.activeProvider { Text("服务：\(provider.name)") }
                                     if let remote = model.githubRemoteConfig { Text("GitHub: \(remote.owner)/\(remote.repo)@\(remote.branch)") }
                                 }
                                 .font(.caption)
@@ -174,11 +174,11 @@ struct RootView: View {
                         }
 
                         HStack {
-                            TextField("Filter files by path", text: $model.fileSearchQuery)
+                            TextField("按路径筛选文件", text: $model.fileSearchQuery)
                                 .textFieldStyle(.roundedBorder)
-                            Button("Import Files") { showFileImporter = true }
-                            Button("Import ZIP") { showZipImporter = true }
-                            Button("Refresh") { model.refreshWorkspaceState() }
+                            Button("导入文件") { showFileImporter = true }
+                            Button("导入 ZIP") { showZipImporter = true }
+                            Button("刷新") { model.refreshWorkspaceState() }
                         }
                         if let importStatusMessage = model.importStatusMessage {
                             Text(importStatusMessage)
@@ -187,7 +187,7 @@ struct RootView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("File Tree")
+                            Text("文件树")
                                 .font(.headline)
                             FileTreeList(entries: model.filteredWorkspaceFiles) { path in
                                 model.requestOpenFile(path)
@@ -202,15 +202,15 @@ struct RootView: View {
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                TextField("New file path", text: $newItemPath)
-                                Button("Create File") {
+                                TextField("新文件路径", text: $newItemPath)
+                                Button("新建文件") {
                                     model.createFile(at: newItemPath)
                                     newItemPath = ""
                                 }
                             }
                             HStack {
-                                TextField("New folder path", text: $newFolderPath)
-                                Button("Create Folder") {
+                                TextField("新文件夹路径", text: $newFolderPath)
+                                Button("新建文件夹") {
                                     model.createFolder(at: newFolderPath)
                                     newFolderPath = ""
                                 }
@@ -221,9 +221,9 @@ struct RootView: View {
 
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                TextField("Search content", text: $model.contentSearchQuery)
+                                TextField("搜索内容", text: $model.contentSearchQuery)
                                     .textFieldStyle(.roundedBorder)
-                                Button("Search") { model.searchContent() }
+                                Button("搜索") { model.searchContent() }
                             }
                             ForEach(model.contentSearchResults, id: \.self) { match in
                                 Button {
@@ -242,25 +242,25 @@ struct RootView: View {
                             }
                         }
                     } else {
-                        ContentUnavailableView("No Workspace", systemImage: "folder.badge.questionmark")
+                        ContentUnavailableView("没有工作区", systemImage: "folder.badge.questionmark")
                     }
                 }
                 .padding()
             }
-            .navigationTitle("Workspace")
-            .confirmationDialog("Delete item?", isPresented: .constant(model.pendingDeletePath != nil), actions: {
-                Button("Delete", role: .destructive) { model.deletePendingPath() }
-                Button("Cancel", role: .cancel) { model.pendingDeletePath = nil }
+            .navigationTitle("工作区")
+            .confirmationDialog("删除项目？", isPresented: .constant(model.pendingDeletePath != nil), actions: {
+                Button("删除", role: .destructive) { model.deletePendingPath() }
+                Button("取消", role: .cancel) { model.pendingDeletePath = nil }
             }, message: {
                 Text(model.pendingDeletePath ?? "")
             })
             .sheet(isPresented: .constant(model.pendingRenamePath != nil), onDismiss: { model.pendingRenamePath = nil }) {
                 NavigationStack {
-                    Form { TextField("New path", text: $renamePathValue) }
-                        .navigationTitle("Rename Item")
+                    Form { TextField("新路径", text: $renamePathValue) }
+                        .navigationTitle("重命名项目")
                         .toolbar {
-                            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.pendingRenamePath = nil } }
-                            ToolbarItem(placement: .confirmationAction) { Button("Save") { model.renameSelectedPath(to: renamePathValue) } }
+                            ToolbarItem(placement: .cancellationAction) { Button("取消") { model.pendingRenamePath = nil } }
+                            ToolbarItem(placement: .confirmationAction) { Button("保存") { model.renameSelectedPath(to: renamePathValue) } }
                         }
                 }
             }
@@ -276,7 +276,7 @@ struct RootView: View {
                             .font(.headline)
                         Spacer()
                         if model.hasUnsavedChanges {
-                            Text("Unsaved")
+                            Text("未保存")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -291,14 +291,14 @@ struct RootView: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 260)
                     HStack {
-                        Button(model.hasUnsavedChanges ? "Save Changes" : "Saved") { model.saveSelectedFile() }
+                        Button(model.hasUnsavedChanges ? "保存更改" : "已保存") { model.saveSelectedFile() }
                             .buttonStyle(.borderedProminent)
-                        Button("Discard") {
+                        Button("放弃") {
                             if let path = model.selectedFilePath { try? model.openFile(path) }
                         }
                     }
                 } else {
-                    ContentUnavailableView("No File Selected", systemImage: "doc.text")
+                    ContentUnavailableView("未选择文件", systemImage: "doc.text")
                 }
             }
         }
@@ -308,22 +308,22 @@ struct RootView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    TextField("Describe the task for the selected workspace", text: $model.chatInput, axis: .vertical)
+                    TextField("描述当前工作区要处理的任务", text: $model.chatInput, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
-                    Button("Start Task") {
+                    Button("开始任务") {
                         Task { await model.startChat() }
                     }
                     .buttonStyle(.borderedProminent)
                     if let run = model.currentRun {
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Status: \(run.status.rawValue)")
+                                Text("状态：\(agentRunStatusText(run.status))")
                                     .font(.headline)
                                 if let answer = run.finalAnswer, answer.isEmpty == false {
                                     Text(answer)
                                 }
                                 if run.toolCalls.isEmpty == false {
-                                    Text("Tools: \(run.toolCalls.map(\.name).joined(separator: ", "))")
+                                    Text("工具：\(run.toolCalls.map(\.name).joined(separator: ", "))")
                                         .font(.caption)
                                 }
                             }
@@ -333,24 +333,24 @@ struct RootView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(question)
                                         .font(.headline)
-                                    TextField("Your answer", text: $model.questionAnswer)
+                                    TextField("你的回答", text: $model.questionAnswer)
                                         .textFieldStyle(.roundedBorder)
-                                    Button("Send Answer") { Task { await model.answerQuestion() } }
+                                    Button("发送回答") { Task { await model.answerQuestion() } }
                                 }
                             }
                         }
                         if run.status == .waitingForPermission, let request = run.pendingPermissionRequest {
                             GlassPanel {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Permission: \(request.name)")
+                                    Text("权限请求：\(request.name)")
                                         .font(.headline)
                                     Text(run.pendingPermissionDecision?.reason ?? "")
                                         .foregroundStyle(.secondary)
                                     Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
                                         .font(.caption.monospaced())
                                     HStack {
-                                        Button("Allow Once") { Task { await model.resumePermission(approved: true) } }
-                                        Button("Deny", role: .destructive) { Task { await model.resumePermission(approved: false) } }
+                                        Button("允许一次") { Task { await model.resumePermission(approved: true) } }
+                                        Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
                                     }
                                 }
                             }
@@ -359,19 +359,19 @@ struct RootView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Chat")
+            .navigationTitle("对话")
         }
     }
 
     private var patchesView: some View {
         NavigationStack {
             List {
-                patchSection(title: "Pending", status: .pendingReview)
-                patchSection(title: "Applied", status: .applied)
-                patchSection(title: "Rejected", status: .rejected)
-                patchSection(title: "Failed", status: .failed)
+                patchSection(title: "待审核", status: .pendingReview)
+                patchSection(title: "已应用", status: .applied)
+                patchSection(title: "已拒绝", status: .rejected)
+                patchSection(title: "失败", status: .failed)
             }
-            .navigationTitle("Patch Review")
+            .navigationTitle("补丁审核")
         }
     }
 
@@ -385,10 +385,10 @@ struct RootView: View {
                             Text(proposal.reason).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(proposal.status.rawValue)
+                        Text(patchProposalStatusText(proposal.status))
                             .font(.caption)
                     }
-                    Text("\(proposal.changedFiles) files · \(proposal.changedLines) lines · agent=\(proposal.agentRunID?.uuidString ?? "n/a") · snapshot=\(proposal.snapshotID?.uuidString ?? "n/a")")
+                    Text("\(proposal.changedFiles) 个文件 · \(proposal.changedLines) 行 · agent=\(proposal.agentRunID?.uuidString ?? "无") · snapshot=\(proposal.snapshotID?.uuidString ?? "无")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let errorMessage = proposal.errorMessage, errorMessage.isEmpty == false {
@@ -398,21 +398,21 @@ struct RootView: View {
                     }
                     ForEach(proposal.changes, id: \.self) { change in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(change.operation.rawValue): \(change.path)")
+                            Text("\(patchOperationText(change.operation))：\(change.path)")
                                 .font(.caption.monospaced())
-                            DiffViewer(diff: change.diff ?? change.newContent ?? (change.newPath.map { "rename -> \($0)" } ?? ""))
+                            DiffViewer(diff: change.diff ?? change.newContent ?? (change.newPath.map { "重命名 -> \($0)" } ?? ""))
                                 .frame(maxHeight: 180)
                         }
                     }
                     if proposal.status == .pendingReview {
                         HStack {
-                            Button("Apply") { model.applyPatch(proposal) }
-                            Button("Reject", role: .destructive) { model.rejectPatch(proposal) }
-                            Button("Ask AI to Revise") { model.revisePatch(proposal, instruction: "Please revise this patch based on user feedback.") }
+                            Button("应用") { model.applyPatch(proposal) }
+                            Button("拒绝", role: .destructive) { model.rejectPatch(proposal) }
+                            Button("让 AI 修改") { model.revisePatch(proposal, instruction: "请根据用户反馈修改这个补丁。") }
                         }
                     }
                     if proposal.snapshotID != nil {
-                        Button("Restore Snapshot") { model.restoreSnapshot(for: proposal) }
+                        Button("恢复快照") { model.restoreSnapshot(for: proposal) }
                             .font(.caption)
                     }
                 }
@@ -426,24 +426,24 @@ struct RootView: View {
                 if let snapshot = model.currentContextSnapshot {
                     VStack(alignment: .leading, spacing: 12) {
                         metricsGrid([
-                            ("prefixHash", snapshot.prefixHash),
-                            ("repoSnapshotHash", snapshot.repoSnapshotHash),
-                            ("fileTreeHash", snapshot.fileTreeHash),
-                            ("toolSchemaHash", snapshot.toolSchemaHash),
-                            ("projectRulesHash", snapshot.projectRulesHash),
-                            ("staticTokenCount", "\(snapshot.staticTokenCount)"),
-                            ("dynamicTokenCount", "\(snapshot.dynamicTokenCount)")
+                            ("前缀哈希", snapshot.prefixHash),
+                            ("仓库快照哈希", snapshot.repoSnapshotHash),
+                            ("文件树哈希", snapshot.fileTreeHash),
+                            ("工具协议哈希", snapshot.toolSchemaHash),
+                            ("项目规则哈希", snapshot.projectRulesHash),
+                            ("静态 Token", "\(snapshot.staticTokenCount)"),
+                            ("动态 Token", "\(snapshot.dynamicTokenCount)")
                         ])
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Included Files (\(snapshot.includedFiles.count))").font(.headline)
+                                Text("已包含文件（\(snapshot.includedFiles.count)）").font(.headline)
                                 Text(snapshot.includedFiles.joined(separator: "\n")).font(.caption.monospaced())
                             }
                         }
                         if snapshot.ignoredFiles.isEmpty == false {
                             GlassPanel {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Ignored Files (\(snapshot.ignoredFiles.count))").font(.headline)
+                                    Text("已忽略文件（\(snapshot.ignoredFiles.count)）").font(.headline)
                                     Text(snapshot.ignoredFiles.joined(separator: "\n")).font(.caption.monospaced())
                                 }
                             }
@@ -456,7 +456,7 @@ struct RootView: View {
                             } label: {
                                 VStack(alignment: .leading) {
                                     Text(block.type.rawValue)
-                                    Text("stable=\(block.stable ? "yes" : "no") · tokens=\(block.tokenCount) · hash=\(block.contentHash)")
+                                    Text("稳定=\(block.stable ? "是" : "否") · token=\(block.tokenCount) · hash=\(block.contentHash)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -466,10 +466,10 @@ struct RootView: View {
                     }
                     .padding()
                 } else {
-                    ContentUnavailableView("No Context", systemImage: "text.redaction")
+                    ContentUnavailableView("暂无上下文", systemImage: "text.redaction")
                 }
             }
-            .navigationTitle("Context")
+            .navigationTitle("上下文")
         }
     }
 
@@ -479,44 +479,44 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if let record = model.cacheRecord {
                         metricsGrid([
-                            ("provider", record.provider),
-                            ("model", record.model),
-                            ("promptTokens", "\(record.promptTokens)"),
-                            ("completionTokens", "\(record.completionTokens)"),
-                            ("totalTokens", "\(record.promptTokens + record.completionTokens)"),
-                            ("cachedTokens", "\(record.cachedTokens)"),
-                            ("cacheMissTokens", "\(record.cacheMissTokens)"),
-                            ("hitRate", String(format: "%.1f%%", record.cacheHitRate * 100)),
-                            ("prefixHash", record.prefixHash),
-                            ("repoSnapshotHash", record.repoSnapshotHash),
-                            ("fileTreeHash", record.fileTreeHash),
-                            ("toolSchemaHash", record.toolSchemaHash),
-                            ("projectRulesHash", record.projectRulesHash),
-                            ("staticTokenCount", "\(record.staticPrefixTokenCount)"),
-                            ("dynamicTokenCount", "\(record.dynamicTokenCount)"),
-                            ("latency", "\(record.latencyMs)ms")
+                            ("服务", record.provider),
+                            ("模型", record.model),
+                            ("提示词 Token", "\(record.promptTokens)"),
+                            ("输出 Token", "\(record.completionTokens)"),
+                            ("总 Token", "\(record.promptTokens + record.completionTokens)"),
+                            ("缓存 Token", "\(record.cachedTokens)"),
+                            ("未命中 Token", "\(record.cacheMissTokens)"),
+                            ("命中率", String(format: "%.1f%%", record.cacheHitRate * 100)),
+                            ("前缀哈希", record.prefixHash),
+                            ("仓库快照哈希", record.repoSnapshotHash),
+                            ("文件树哈希", record.fileTreeHash),
+                            ("工具协议哈希", record.toolSchemaHash),
+                            ("项目规则哈希", record.projectRulesHash),
+                            ("静态 Token", "\(record.staticPrefixTokenCount)"),
+                            ("动态 Token", "\(record.dynamicTokenCount)"),
+                            ("延迟", "\(record.latencyMs)ms")
                         ])
                         if record.cachedTokens == 0 {
-                            Text(model.activeProvider?.supportsPromptCache == true ? "Provider did not return cached token fields; showing prefix-hash estimates only." : "Current provider does not declare prompt cache support.")
+                            Text(model.activeProvider?.supportsPromptCache == true ? "服务没有返回缓存 token 字段；这里只显示前缀 hash 估算。" : "当前服务没有声明支持提示词缓存。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         if record.missReasons.isEmpty == false {
                             GlassPanel {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Miss Reasons").font(.headline)
+                                    Text("未命中原因").font(.headline)
                                     Text(record.missReasons.map(\.rawValue).joined(separator: "\n"))
                                         .font(.caption.monospaced())
                                 }
                             }
                         }
                     }
-                    SectionHeader(title: "History")
+                    SectionHeader(title: "历史")
                     ForEach(model.cacheHistory) { record in
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("\(record.provider) / \(record.model)")
-                                Text("cached=\(record.cachedTokens) prompt=\(record.promptTokens) hit=\(String(format: "%.1f%%", record.cacheHitRate * 100))")
+                                Text("缓存=\(record.cachedTokens) 提示词=\(record.promptTokens) 命中=\(String(format: "%.1f%%", record.cacheHitRate * 100))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -525,7 +525,7 @@ struct RootView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Cache")
+            .navigationTitle("缓存")
         }
     }
 
@@ -536,17 +536,17 @@ struct RootView: View {
                     if let workspace = model.selectedWorkspace {
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("GitHub Remote").font(.headline)
-                                TextField("Owner", text: $model.remoteOwner)
-                                TextField("Repo", text: $model.remoteRepo)
-                                TextField("Branch", text: $model.remoteBranch)
-                                SecureField("GitHub Token", text: $model.remoteToken)
+                                Text("GitHub 远端").font(.headline)
+                                TextField("所有者", text: $model.remoteOwner)
+                                TextField("仓库", text: $model.remoteRepo)
+                                TextField("分支", text: $model.remoteBranch)
+                                SecureField("GitHub 令牌", text: $model.remoteToken)
                                 HStack {
-                                    Button("Link Repo") { Task { await model.linkGitHubRepository() } }
-                                    Button("Reload") { Task { await model.refreshGitHubData() } }
+                                    Button("关联仓库") { Task { await model.linkGitHubRepository() } }
+                                    Button("重新加载") { Task { await model.refreshGitHubData() } }
                                 }
                                 if let remote = model.githubRemoteConfig {
-                                    Text("Linked: \(remote.owner)/\(remote.repo) @ \(remote.branch)")
+                                    Text("已关联：\(remote.owner)/\(remote.repo) @ \(remote.branch)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -560,24 +560,24 @@ struct RootView: View {
 
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Commit & Push").font(.headline)
-                                TextField("Commit message", text: $model.commitMessage)
-                                Button("Preview Commit Summary") { Task { await model.previewCommit() } }
-                                Button("Commit & Push") {
+                                Text("提交并推送").font(.headline)
+                                TextField("提交信息", text: $model.commitMessage)
+                                Button("预览提交摘要") { Task { await model.previewCommit() } }
+                                Button("提交并推送") {
                                     Task {
                                         let isProtectedBranch = GitHubSyncService.protectedBranches.contains(model.remoteBranch)
                                         await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !isProtectedBranch)
                                     }
                                 }
-                                Toggle("I confirm a protected branch push", isOn: $pushProtectedBranch)
+                                Toggle("确认推送到受保护分支", isOn: $pushProtectedBranch)
                                 if let summary = model.commitSummary {
-                                    Text("Prepared SHA: \(summary.headSHA)").font(.caption)
+                                    Text("准备提交 SHA：\(summary.headSHA)").font(.caption)
                                     ForEach(summary.changedFiles, id: \.path) { file in
                                         Text("• \(file.path)")
                                             .font(.caption.monospaced())
                                     }
                                     if summary.skippedFiles.isEmpty == false {
-                                        Text("Skipped: \(summary.skippedFiles.map { "\($0.path) (\($0.skippedReason ?? ""))" }.joined(separator: ", "))")
+                                        Text("已跳过：\(summary.skippedFiles.map { "\($0.path) (\($0.skippedReason ?? ""))" }.joined(separator: ", "))")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
@@ -587,17 +587,17 @@ struct RootView: View {
 
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Create Pull Request").font(.headline)
-                                TextField("Title", text: $model.pullRequestTitle)
-                                TextField("Body", text: $model.pullRequestBody, axis: .vertical)
-                                Button("Create PR") { Task { await model.createPullRequest() } }
+                                Text("创建拉取请求").font(.headline)
+                                TextField("标题", text: $model.pullRequestTitle)
+                                TextField("正文", text: $model.pullRequestBody, axis: .vertical)
+                                Button("创建拉取请求") { Task { await model.createPullRequest() } }
                             }
                         }
 
                         if let builds = model.buildConfiguration {
                             GlassPanel {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text("Build Buttons · \(builds.name)").font(.headline)
+                                    Text("构建按钮 · \(builds.name)").font(.headline)
                                     ForEach(builds.builds) { build in
                                         Button(build.name) { Task { await model.dispatchWorkflow(build: build) } }
                                     }
@@ -607,11 +607,11 @@ struct RootView: View {
 
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Workflows").font(.headline)
-                                TextField("Workflow ID or file name", text: $model.selectedWorkflowIdentifier)
-                                TextField("Ref", text: $model.selectedWorkflowRef)
-                                TextField("Inputs JSON", text: $model.workflowInputsText, axis: .vertical)
-                                Button("Trigger Workflow") { Task { await model.dispatchWorkflow() } }
+                                Text("工作流").font(.headline)
+                                TextField("工作流 ID 或文件名", text: $model.selectedWorkflowIdentifier)
+                                TextField("引用分支或标签", text: $model.selectedWorkflowRef)
+                                TextField("输入 JSON", text: $model.workflowInputsText, axis: .vertical)
+                                Button("触发工作流") { Task { await model.dispatchWorkflow() } }
                                 ForEach(model.githubWorkflows) { workflow in
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(workflow.name)
@@ -625,25 +625,25 @@ struct RootView: View {
 
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Runs / Jobs / Artifacts").font(.headline)
+                                Text("运行 / 任务 / 产物").font(.headline)
                                 ForEach(model.workflowRuns) { run in
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(run.name ?? "Run \(run.id)")
-                                        Text("status=\(run.status ?? "n/a") conclusion=\(run.conclusion ?? "n/a") branch=\(run.headBranch ?? "n/a")")
+                                        Text(run.name ?? "运行 \(run.id)")
+                                        Text("状态=\(run.status ?? "无") 结论=\(run.conclusion ?? "无") 分支=\(run.headBranch ?? "无")")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
                                 }
                                 Divider()
                                 ForEach(model.workflowJobs) { job in
-                                    Text("Job: \(job.name) · \(job.status ?? "n/a") / \(job.conclusion ?? "n/a")")
+                                    Text("任务：\(job.name) · \(job.status ?? "无") / \(job.conclusion ?? "无")")
                                         .font(.caption)
                                 }
                                 Divider()
                                 ForEach(model.workflowArtifacts) { artifact in
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(artifact.name)
-                                        Text("size=\(artifact.sizeInBytes) · \(artifact.archiveDownloadURL)")
+                                        Text("大小=\(artifact.sizeInBytes) · \(artifact.archiveDownloadURL)")
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
@@ -651,7 +651,7 @@ struct RootView: View {
                             }
                         }
                     } else {
-                        ContentUnavailableView("Select a workspace first", systemImage: "arrow.triangle.branch")
+                        ContentUnavailableView("请先选择工作区", systemImage: "arrow.triangle.branch")
                     }
                 }
                 .padding()
@@ -663,7 +663,7 @@ struct RootView: View {
     private var settingsView: some View {
         NavigationStack {
             List {
-                Section("Provider Profiles") {
+                Section("模型服务配置") {
                     ForEach(model.providerProfiles) { profile in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(profile.name)
@@ -671,28 +671,28 @@ struct RootView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             HStack {
-                                Button("Edit") {
+                                Button("编辑") {
                                     editingProvider = profile
                                     providerAPIKey = ""
                                     showProviderEditor = true
                                 }
-                                Button("Use") { model.assignProvider(profile.id) }
-                                Button("Export") { model.exportProvider(profile) }
-                                Button("Delete", role: .destructive) { model.deleteProvider(profile, deleteSecret: false) }
+                                Button("使用") { model.assignProvider(profile.id) }
+                                Button("导出") { model.exportProvider(profile) }
+                                Button("删除", role: .destructive) { model.deleteProvider(profile, deleteSecret: false) }
                             }
                             .font(.caption)
                         }
                     }
-                    Button("Add Provider") {
+                    Button("添加服务") {
                         editingProvider = nil
                         providerAPIKey = ""
                         showProviderEditor = true
                     }
                 }
-                Section("Provider Import / Export") {
+                Section("服务导入 / 导出") {
                     TextEditor(text: $model.providerImportJSON)
                         .frame(minHeight: 120)
-                    Button("Import Provider JSON") { model.importProviderProfileJSON() }
+                    Button("导入服务 JSON") { model.importProviderProfileJSON() }
                     if model.providerExportJSON.isEmpty == false {
                         TextEditor(text: $model.providerExportJSON)
                             .frame(minHeight: 180)
@@ -700,10 +700,10 @@ struct RootView: View {
                     }
                 }
                 if let status = model.lastConnectionStatus {
-                    Section("Connection") { Text(status) }
+                    Section("连接") { Text(status) }
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle("设置")
         }
     }
 
@@ -720,7 +720,7 @@ struct RootView: View {
                     }
                 }
             }
-            .navigationTitle("Audit Logs")
+            .navigationTitle("审计日志")
         }
     }
 
@@ -760,6 +760,37 @@ struct RootView: View {
                 ModelProfile(id: "", displayName: "", supportsReasoning: false, supportsCache: false, cacheStrategy: .noProviderCacheInfo, supportsTools: true, supportsStreaming: true, maxContextTokens: 128_000, maxOutputTokens: 4_096)
             ]
         )
+    }
+
+    private func agentRunStatusText(_ status: AgentRunStatus) -> String {
+        switch status {
+        case .running: "运行中"
+        case .waitingForUser: "等待用户回答"
+        case .waitingForPermission: "等待权限确认"
+        case .waitingForPatchReview: "等待补丁审核"
+        case .completed: "已完成"
+        case .failed: "失败"
+        case .cancelled: "已取消"
+        }
+    }
+
+    private func patchProposalStatusText(_ status: PatchProposalStatus) -> String {
+        switch status {
+        case .pendingReview: "待审核"
+        case .applied: "已应用"
+        case .rejected: "已拒绝"
+        case .failed: "失败"
+        case .superseded: "已被替代"
+        }
+    }
+
+    private func patchOperationText(_ operation: PatchOperation) -> String {
+        switch operation {
+        case .modify: "修改"
+        case .create: "新建"
+        case .delete: "删除"
+        case .rename: "重命名"
+        }
     }
 }
 
@@ -816,10 +847,10 @@ private struct FileTreeList: View {
             }
             .contextMenu {
                 if node.isDirectory == false {
-                    Button("Open") { onOpen(node.path) }
+                    Button("打开") { onOpen(node.path) }
                 }
-                Button("Rename") { onRename(node.path) }
-                Button("Delete", role: .destructive) { onDelete(node.path) }
+                Button("重命名") { onRename(node.path) }
+                Button("删除", role: .destructive) { onDelete(node.path) }
             }
             if node.isDirectory, expanded.contains(node.path) || depth == 0 {
                 ForEach(node.children, id: \.id) { child in
@@ -891,57 +922,57 @@ private struct ProviderProfileEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Provider") {
-                    TextField("Name", text: $draft.name)
-                    Picker("API Style", selection: $draft.apiStyle) {
+                Section("服务") {
+                    TextField("名称", text: $draft.name)
+                    Picker("API 类型", selection: $draft.apiStyle) {
                         ForEach(APIStyle.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
-                    TextField("Base URL", text: $draft.baseURL)
+                    TextField("基础 URL", text: $draft.baseURL)
                         .textInputAutocapitalization(.never)
-                    TextField("Endpoint", text: $draft.endpoint)
+                    TextField("接口路径", text: $draft.endpoint)
                         .textInputAutocapitalization(.never)
-                    Picker("Auth Type", selection: $draft.authType) {
+                    Picker("认证方式", selection: $draft.authType) {
                         ForEach(AuthType.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
-                    TextField("Auth key name", text: $draft.authKeyName)
-                    SecureField("API Key", text: $apiKey)
-                    Toggle("Supports streaming", isOn: $draft.supportsStreaming)
-                    Toggle("Supports tool calling", isOn: $draft.supportsToolCalling)
-                    Toggle("Supports JSON mode", isOn: $draft.supportsJSONMode)
-                    Toggle("Supports vision", isOn: $draft.supportsVision)
-                    Toggle("Supports reasoning", isOn: $draft.supportsReasoning)
-                    Toggle("Supports prompt cache", isOn: $draft.supportsPromptCache)
-                    Toggle("Supports explicit cache control", isOn: $draft.supportsExplicitCacheControl)
-                    Toggle("Supports web search", isOn: $draft.supportsWebSearch)
+                    TextField("认证字段名", text: $draft.authKeyName)
+                    SecureField("API 密钥", text: $apiKey)
+                    Toggle("支持流式输出", isOn: $draft.supportsStreaming)
+                    Toggle("支持工具调用", isOn: $draft.supportsToolCalling)
+                    Toggle("支持 JSON 模式", isOn: $draft.supportsJSONMode)
+                    Toggle("支持视觉", isOn: $draft.supportsVision)
+                    Toggle("支持推理", isOn: $draft.supportsReasoning)
+                    Toggle("支持提示词缓存", isOn: $draft.supportsPromptCache)
+                    Toggle("支持显式缓存控制", isOn: $draft.supportsExplicitCacheControl)
+                    Toggle("支持联网搜索", isOn: $draft.supportsWebSearch)
                 }
-                Section("Request Mapping") {
+                Section("请求字段映射") {
                     mappingFields(prefix: $draft.requestFieldMapping)
                 }
-                Section("Response Mapping") {
+                Section("响应字段映射") {
                     mappingFields(prefix: $draft.responseFieldMapping)
                 }
-                Section("Usage Mapping") {
+                Section("用量字段映射") {
                     mappingFields(prefix: $draft.usageFieldMapping)
                 }
-                Section("Extra Headers") {
+                Section("额外请求头") {
                     KeyValueListEditor(rows: $draft.extraHeaders)
                 }
-                Section("Extra Body Parameters") {
+                Section("额外请求体参数") {
                     KeyValueListEditor(rows: $draft.extraBodyParameters)
                 }
-                Section("Models") {
+                Section("模型") {
                     ForEach($draft.models) { $model in
                         ModelDraftEditor(model: $model)
                     }
-                    Button("Add Model") { draft.models.append(ModelDraft()) }
+                    Button("添加模型") { draft.models.append(ModelDraft()) }
                 }
             }
-            .navigationTitle("Provider Profile")
+            .navigationTitle("服务配置")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItemGroup(placement: .confirmationAction) {
-                    Button("Test") { if let profile = draft.makeProfile() { onTest(profile, apiKey.isEmpty ? nil : apiKey) } }
-                    Button("Save") {
+                    Button("测试") { if let profile = draft.makeProfile() { onTest(profile, apiKey.isEmpty ? nil : apiKey) } }
+                    Button("保存") {
                         if let profile = draft.makeProfile() {
                             onSave(profile, apiKey.isEmpty ? nil : apiKey)
                             dismiss()
@@ -962,20 +993,20 @@ private struct ModelDraftEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Model ID", text: $model.id)
-            TextField("Display Name", text: $model.displayName)
-            TextField("Max Context Tokens", value: $model.maxContextTokens, format: .number)
-            TextField("Max Output Tokens", value: $model.maxOutputTokens, format: .number)
-            Toggle("Supports reasoning", isOn: $model.supportsReasoning)
-            TextField("Reasoning enabled field", text: $model.reasoningEnabledField)
-            TextField("Reasoning depth field", text: $model.reasoningDepthField)
+            TextField("模型 ID", text: $model.id)
+            TextField("显示名称", text: $model.displayName)
+            TextField("最大上下文 Token", value: $model.maxContextTokens, format: .number)
+            TextField("最大输出 Token", value: $model.maxOutputTokens, format: .number)
+            Toggle("支持推理", isOn: $model.supportsReasoning)
+            TextField("推理开关字段", text: $model.reasoningEnabledField)
+            TextField("推理深度字段", text: $model.reasoningDepthField)
             KeyValueListEditor(rows: $model.reasoningLevels)
-            Toggle("Supports cache", isOn: $model.supportsCache)
-            Picker("Cache Strategy", selection: $model.cacheStrategy) {
+            Toggle("支持缓存", isOn: $model.supportsCache)
+            Picker("缓存策略", selection: $model.cacheStrategy) {
                 ForEach(CacheStrategy.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            Toggle("Supports tools", isOn: $model.supportsTools)
-            Toggle("Supports streaming", isOn: $model.supportsStreaming)
+            Toggle("支持工具", isOn: $model.supportsTools)
+            Toggle("支持流式输出", isOn: $model.supportsStreaming)
             KeyValueListEditor(rows: $model.extraParameters)
         }
     }
@@ -1120,14 +1151,14 @@ private struct KeyValueListEditor: View {
     var body: some View {
         ForEach($rows) { $row in
             HStack {
-                TextField("key", text: $row.key)
-                TextField("value", text: $row.value)
+                TextField("键", text: $row.key)
+                TextField("值", text: $row.value)
             }
         }
         HStack {
-            Button("Add Row") { rows.append(EditablePair()) }
+            Button("添加行") { rows.append(EditablePair()) }
             if rows.isEmpty == false {
-                Button("Remove Last", role: .destructive) { rows.removeLast() }
+                Button("删除最后一行", role: .destructive) { rows.removeLast() }
             }
         }
     }

@@ -43,7 +43,7 @@ final class AppModel: ObservableObject {
     @Published var remoteRepo = ""
     @Published var remoteBranch = "main"
     @Published var remoteToken = ""
-    @Published var commitMessage = "Update from LocalAIWorkspace"
+    @Published var commitMessage = "通过本地工程助手更新"
     @Published var pullRequestTitle = ""
     @Published var pullRequestBody = ""
     @Published var selectedWorkflowIdentifier = ""
@@ -95,7 +95,7 @@ final class AppModel: ObservableObject {
                 .first?
                 .appendingPathComponent("ProviderProfiles/profiles.json") ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("profiles.json")
         } catch {
-            fatalError("Failed to initialize WorkspaceManager: \(error.localizedDescription)")
+            fatalError("初始化工作区管理器失败：\(error.localizedDescription)")
         }
         self.secretStore = secretStore
         self.aiClient = aiClient
@@ -122,7 +122,7 @@ final class AppModel: ObservableObject {
 
     func createWorkspace(named name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            lastErrorMessage = "Workspace name cannot be empty."
+            lastErrorMessage = "工作区名称不能为空。"
             return
         }
         do {
@@ -136,7 +136,7 @@ final class AppModel: ObservableObject {
 
     func renameWorkspace(_ workspace: Workspace, to name: String) {
         guard name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            lastErrorMessage = "Workspace name cannot be empty."
+            lastErrorMessage = "工作区名称不能为空。"
             return
         }
         do {
@@ -210,7 +210,7 @@ final class AppModel: ObservableObject {
             } else {
                 try workspaceImportService.importDirectory(sourceURLs: urls, workspaceID: workspace.id)
             }
-            importStatusMessage = "Imported \(result.importedCount) item(s). \(result.warnings.joined(separator: " "))"
+            importStatusMessage = "已导入 \(result.importedCount) 个项目。\(result.warnings.joined(separator: " "))"
             refreshWorkspaceState()
             try log(action: isZip ? "zip_imported" : "files_imported", workspaceID: workspace.id, metadata: ["count": .integer(result.importedCount)])
         } catch {
@@ -221,7 +221,7 @@ final class AppModel: ObservableObject {
     func createFile(at path: String, contents: String = "") {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
-            lastErrorMessage = "New file path cannot be empty."
+            lastErrorMessage = "新文件路径不能为空。"
             return
         }
         updateFileSystem { fs in
@@ -233,7 +233,7 @@ final class AppModel: ObservableObject {
     func createFolder(at path: String) {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
-            lastErrorMessage = "New folder path cannot be empty."
+            lastErrorMessage = "新文件夹路径不能为空。"
             return
         }
         updateFileSystem { fs in
@@ -283,7 +283,7 @@ final class AppModel: ObservableObject {
         guard let source = pendingRenamePath else { return }
         let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
-            lastErrorMessage = "Rename path cannot be empty."
+            lastErrorMessage = "重命名路径不能为空。"
             return
         }
         updateFileSystem { fs in
@@ -392,22 +392,22 @@ final class AppModel: ObservableObject {
             let response = try await aiClient.complete(profile: profile, apiKey: key, request: request)
             let usage = response.usage
             let usageSummary = [usage?.inputTokens, usage?.outputTokens, usage?.latencyMs].compactMap { $0 }.map(String.init).joined(separator: "/")
-            lastConnectionStatus = "Connection succeeded · model=\(modelID) · usage/latency=\(usageSummary.isEmpty ? "n/a" : usageSummary)"
+            lastConnectionStatus = "连接成功 · 模型=\(modelID) · 用量/延迟=\(usageSummary.isEmpty ? "无" : usageSummary)"
             try log(action: "provider_tested", workspaceID: selectedWorkspace?.id, metadata: ["provider": .string(profile.name), "success": .bool(true)])
         } catch {
             present(error)
-            lastConnectionStatus = "Connection failed: \(error.localizedDescription)"
+            lastConnectionStatus = "连接失败：\(error.localizedDescription)"
             try? log(action: "provider_tested", workspaceID: selectedWorkspace?.id, metadata: ["provider": .string(profile.name), "success": .bool(false)])
         }
     }
 
     func startChat() async {
         guard let workspace = selectedWorkspace else {
-            lastErrorMessage = "Select a workspace first."
+            lastErrorMessage = "请先选择工作区。"
             return
         }
         guard let profile = activeProvider, let model = activeModel else {
-            lastErrorMessage = "Select a provider profile first."
+            lastErrorMessage = "请先选择模型服务配置。"
             return
         }
         do {
@@ -510,7 +510,7 @@ final class AppModel: ObservableObject {
     func revisePatch(_ proposal: PatchProposal, instruction: String) {
         patchRevisionInstruction = instruction
         let diff = proposal.changes.map { $0.diff ?? $0.newContent ?? "\($0.operation.rawValue) \($0.path)" }.joined(separator: "\n\n")
-        chatInput = "Revise patch \(proposal.title). Instruction: \(instruction)\n\nCurrent proposal diff:\n\(diff)"
+        chatInput = "修改补丁 \(proposal.title)。要求：\(instruction)\n\n当前补丁 diff：\n\(diff)"
         selectedTab = .chat
         try? log(action: "patch_revise_requested", workspaceID: selectedWorkspace?.id, metadata: ["patch": .string(proposal.id.uuidString)])
     }
@@ -520,7 +520,7 @@ final class AppModel: ObservableObject {
         do {
             let remote = try await githubSyncService.linkRepository(workspaceID: workspace.id, owner: remoteOwner, repo: remoteRepo, branch: remoteBranch, token: remoteToken)
             githubRemoteConfig = remote
-            githubStatusMessage = "Linked \(remote.owner)/\(remote.repo)@\(remote.branch)"
+            githubStatusMessage = "已关联 \(remote.owner)/\(remote.repo)@\(remote.branch)"
             try log(action: "github_linked", workspaceID: workspace.id, metadata: ["repo": .string(remote.remoteURL)])
             remoteToken = ""
         } catch {
@@ -548,7 +548,7 @@ final class AppModel: ObservableObject {
         guard let workspace = selectedWorkspace else { return }
         do {
             commitSummary = try await githubSyncService.pushWorkspaceToBranch(workspaceID: workspace.id, message: commitMessage, confirmed: confirmed, secondProtectedBranchConfirmation: secondProtectedBranchConfirmation)
-            githubStatusMessage = "Pushed commit \(commitSummary?.headSHA ?? "")"
+            githubStatusMessage = "已推送提交 \(commitSummary?.headSHA ?? "")"
             try log(action: "github_push", workspaceID: workspace.id, metadata: ["sha": .string(commitSummary?.headSHA ?? "")])
             refreshWorkspaceState()
         } catch {
@@ -560,7 +560,7 @@ final class AppModel: ObservableObject {
         guard let workspace = selectedWorkspace else { return }
         do {
             commitSummary = try await githubSyncService.previewWorkspaceChanges(workspaceID: workspace.id)
-            githubStatusMessage = "Dry-run preview: \(commitSummary?.changedFiles.count ?? 0) eligible file(s), \(commitSummary?.skippedFiles.count ?? 0) skipped. No GitHub commit was created."
+            githubStatusMessage = "预览完成：\(commitSummary?.changedFiles.count ?? 0) 个文件可提交，\(commitSummary?.skippedFiles.count ?? 0) 个文件会跳过。不会创建 GitHub 提交。"
         } catch {
             present(error)
         }
@@ -571,7 +571,7 @@ final class AppModel: ObservableObject {
         do {
             let baseBranch = githubRepository?.defaultBranch ?? "main"
             let url = try await githubSyncService.createPullRequest(workspaceID: workspace.id, title: pullRequestTitle, body: pullRequestBody, head: remote.branch, base: baseBranch)
-            githubStatusMessage = "Pull Request created: \(url)"
+            githubStatusMessage = "拉取请求已创建：\(url)"
             try log(action: "pull_request_created", workspaceID: workspace.id, metadata: ["url": .string(url)])
         } catch {
             present(error)
@@ -582,7 +582,7 @@ final class AppModel: ObservableObject {
         guard let workspace = selectedWorkspace else { return }
         let workflow = build?.workflow ?? selectedWorkflowIdentifier
         guard workflow.isEmpty == false else {
-            lastErrorMessage = "Choose a workflow first."
+            lastErrorMessage = "请先选择工作流。"
             return
         }
         do {
@@ -590,7 +590,7 @@ final class AppModel: ObservableObject {
             let ref = build?.ref ?? (selectedWorkflowRef.isEmpty ? (githubRemoteConfig?.branch ?? "main") : selectedWorkflowRef)
             let dispatchInputs = (build?.inputs.isEmpty == false) ? (build?.inputs ?? [:]) : inputs
             try await githubSyncService.dispatchWorkflow(workspaceID: workspace.id, workflowIDOrFileName: workflow, ref: ref, inputs: dispatchInputs)
-            githubStatusMessage = "Workflow dispatched: \(workflow)"
+            githubStatusMessage = "工作流已触发：\(workflow)"
             try log(action: "workflow_dispatched", workspaceID: workspace.id, metadata: ["workflow": .string(workflow), "ref": .string(ref)])
             await refreshGitHubData()
         } catch {
@@ -633,12 +633,12 @@ final class AppModel: ObservableObject {
 
     private func makeContextRequest(for workspace: Workspace) -> ContextBuildRequest {
         ContextBuildRequest(
-            systemPrompt: "Safe local-first iOS workspace assistant. Follow the stable prefix blocks and always use patch review.",
+            systemPrompt: "安全的本地优先 iOS 工作区助手。遵循稳定前缀块，并始终使用补丁审核流程。",
             toolSchemaText: SupportedTools.schemas.sorted(by: { $0.name < $1.name }).map { "\($0.name): \($0.description)" }.joined(separator: "\n"),
             permissionRules: makePermissionRules(),
-            projectRules: "Only edit files inside workspace/files. Never access Keychain, API keys, or workspace-external paths. Protected paths and GitHub operations require confirmation.",
-            dependencySummary: "SwiftUI App shell + LocalAIWorkspace core services + GitHub sync/actions + context/cache + patch review.",
-            aiMemory: "Use ask_question for ambiguity and propose_patch for every mutation.",
+            projectRules: "只允许编辑 workspace/files 内的文件。不要访问 Keychain、API Key 或工作区外部路径。受保护路径和 GitHub 操作必须确认。",
+            dependencySummary: "SwiftUI App 壳 + LocalAIWorkspace 核心服务 + GitHub 同步/Actions + 上下文/缓存 + 补丁审核。",
+            aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch。",
             currentTask: chatInput,
             openedFiles: currentOpenedFiles(),
             relatedSnippets: contentSearchResults,
@@ -754,15 +754,15 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .projects: "Projects"
-        case .workspace: "Workspace"
-        case .chat: "Chat"
-        case .patches: "Patch Review"
-        case .context: "Context"
-        case .cache: "Cache"
+        case .projects: "项目"
+        case .workspace: "工作区"
+        case .chat: "对话"
+        case .patches: "补丁审核"
+        case .context: "上下文"
+        case .cache: "缓存"
         case .github: "GitHub"
-        case .settings: "Settings"
-        case .logs: "Logs"
+        case .settings: "设置"
+        case .logs: "日志"
         }
     }
 
