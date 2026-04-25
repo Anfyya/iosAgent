@@ -833,7 +833,7 @@ final class AppModel: ObservableObject {
 
     private func makeContextRequest(for workspace: Workspace, currentTask: String? = nil) -> ContextBuildRequest {
         let taskText = currentTask ?? chatInput
-        ContextBuildRequest(
+        return ContextBuildRequest(
             systemPrompt: "安全的本地优先 iOS 项目助手。遵循稳定前缀块，并且只允许修改当前项目内的文件。",
             toolSchemaText: SupportedTools.schemas.sorted(by: { $0.name < $1.name }).map { "\($0.name): \($0.description)" }.joined(separator: "\n"),
             permissionRules: makePermissionRules(),

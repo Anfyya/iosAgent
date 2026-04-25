@@ -45,7 +45,7 @@ struct ChatBubble: View {
         borderColor: Color? = nil
     ) -> some View {
         let hasSecondaryText = item.secondaryText?.isEmpty == false
-        VStack(alignment: alignment, spacing: 6) {
+        return VStack(alignment: alignment, spacing: 6) {
             if let secondaryText = item.secondaryText, hasSecondaryText {
                 Text(secondaryText)
                     .font(.caption)
