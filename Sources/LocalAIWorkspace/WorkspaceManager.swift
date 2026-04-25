@@ -16,7 +16,6 @@ public enum WorkspaceManagerError: Error, LocalizedError {
 
 public struct WorkspaceManager: Sendable {
     public let baseURL: URL
-    private let fileManager: FileManager
 
     public init(baseURL: URL? = nil, fileManager: FileManager = .default) throws {
         if let baseURL {
@@ -26,7 +25,6 @@ public struct WorkspaceManager: Sendable {
         } else {
             throw WorkspaceManagerError.documentsDirectoryUnavailable
         }
-        self.fileManager = fileManager
         try fileManager.createDirectory(at: self.baseURL, withIntermediateDirectories: true)
     }
 
@@ -38,11 +36,11 @@ public struct WorkspaceManager: Sendable {
     ) throws -> Workspace {
         let files = filesURL(for: id)
         let mobiledev = mobiledevURL(for: id)
-        try fileManager.createDirectory(at: files, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: mobiledev.appendingPathComponent("context"), withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: mobiledev.appendingPathComponent("snapshots"), withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: mobiledev.appendingPathComponent("github"), withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: mobiledev.appendingPathComponent("logs"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mobiledev.appendingPathComponent("context"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mobiledev.appendingPathComponent("snapshots"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mobiledev.appendingPathComponent("github"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: mobiledev.appendingPathComponent("logs"), withIntermediateDirectories: true)
         let workspace = Workspace(
             id: id,
             name: name,
@@ -61,11 +59,11 @@ public struct WorkspaceManager: Sendable {
     }
 
     public func listWorkspaces() throws -> [Workspace] {
-        guard fileManager.fileExists(atPath: baseURL.path) else { return [] }
-        let contents = try fileManager.contentsOfDirectory(at: baseURL, includingPropertiesForKeys: nil)
+        guard FileManager.default.fileExists(atPath: baseURL.path) else { return [] }
+        let contents = try FileManager.default.contentsOfDirectory(at: baseURL, includingPropertiesForKeys: nil)
         return try contents.compactMap { url in
             let metadataURL = url.appendingPathComponent(".mobiledev/workspace.json")
-            guard fileManager.fileExists(atPath: metadataURL.path) else { return nil }
+            guard FileManager.default.fileExists(atPath: metadataURL.path) else { return nil }
             return try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
         }
         .sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
@@ -88,8 +86,8 @@ public struct WorkspaceManager: Sendable {
 
     public func deleteWorkspace(id: UUID) throws {
         let url = workspaceURL(for: id)
-        guard fileManager.fileExists(atPath: url.path) else { throw WorkspaceManagerError.missingWorkspace(id) }
-        try fileManager.removeItem(at: url)
+        guard FileManager.default.fileExists(atPath: url.path) else { throw WorkspaceManagerError.missingWorkspace(id) }
+        try FileManager.default.removeItem(at: url)
     }
 
     public func refreshFileTree(workspaceID: UUID) throws -> [WorkspaceFileEntry] {
@@ -127,19 +125,19 @@ public struct WorkspaceManager: Sendable {
 
     public func loadWorkspace(id: UUID) throws -> Workspace {
         let metadataURL = mobiledevURL(for: id).appendingPathComponent("workspace.json")
-        guard fileManager.fileExists(atPath: metadataURL.path) else { throw WorkspaceManagerError.missingWorkspace(id) }
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else { throw WorkspaceManagerError.missingWorkspace(id) }
         return try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
     }
 
     public func saveWorkspaceMetadata(_ workspace: Workspace) throws {
         let metadataURL = mobiledevURL(for: workspace.id).appendingPathComponent("workspace.json")
-        try fileManager.createDirectory(at: metadataURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: metadataURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder.pretty.encode(workspace)
         try data.write(to: metadataURL, options: .atomic)
     }
 
     private func writeIfMissing(url: URL, data: Data) throws {
-        guard !fileManager.fileExists(atPath: url.path) else { return }
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
         try data.write(to: url, options: .atomic)
     }
 }
