@@ -210,9 +210,7 @@ public struct WorkspaceImportService: Sendable {
                 let name = ext.isEmpty ? "\(base)_copy_\(counter)" : "\(base)_copy_\(counter).\(ext)"
                 let candidate = parent.appendingPathComponent(name)
                 if !FileManager.default.fileExists(atPath: candidate.path) {
-                    guard candidate.path == fs.rootURL.path || candidate.path.hasPrefix(fs.rootURL.path + "/") else {
-                        throw WorkspaceImportError.invalidDestinationPath(relativePath)
-                    }
+                    _ = try candidate.resolvedRelativePath(from: fs.rootURL)
                     return candidate
                 }
                 counter += 1

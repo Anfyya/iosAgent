@@ -301,15 +301,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func createFile(at path: String, contents: String = "") {
+    @discardableResult
+    func createFile(at path: String, contents: String = "") -> Bool {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
             lastErrorMessage = "新文件路径不能为空。"
-            return
+            return false
         }
         guard selectedWorkspace != nil else {
             lastErrorMessage = "请先选择项目。"
-            return
+            return false
         }
         if updateFileSystem({ fs in
             try fs.writeTextFile(path: trimmed, content: contents, allowProtectedPaths: true)
@@ -319,18 +320,21 @@ final class AppModel: ObservableObject {
             hasUnsavedChanges = false
             importStatusMessage = "已创建文件：\(trimmed)"
             try? log(action: "file_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
+            return true
         }
+        return false
     }
 
-    func createFolder(at path: String) {
+    @discardableResult
+    func createFolder(at path: String) -> Bool {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
             lastErrorMessage = "新文件夹路径不能为空。"
-            return
+            return false
         }
         guard selectedWorkspace != nil else {
             lastErrorMessage = "请先选择项目。"
-            return
+            return false
         }
         if updateFileSystem({ fs in
             let url = try fs.safeURL(for: trimmed, requiresProtectedPathAccess: true)
@@ -338,7 +342,9 @@ final class AppModel: ObservableObject {
         }) {
             importStatusMessage = "已创建文件夹：\(trimmed)"
             try? log(action: "folder_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
+            return true
         }
+        return false
     }
 
     func requestOpenFile(_ path: String) {

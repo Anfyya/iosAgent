@@ -19,6 +19,14 @@ struct WorkspaceFSTests {
         }
     }
 
+    @Test func safeURLRejectsCurrentDirectoryAlias() async throws {
+        let fs = try makeWorkspaceFS()
+
+        #expect(throws: WorkspaceFSError.self) {
+            _ = try fs.writeTextFile(path: ".", content: "bad")
+        }
+    }
+
     @Test func safeURLRejectsSymlinkEscape() async throws {
         let root = makeTemporaryDirectory()
         let sibling = makeTemporaryDirectory()
@@ -65,6 +73,21 @@ struct WorkspaceFSTests {
         #expect(file.hash.isEmpty == false)
         #expect(matches.count == 1)
         #expect(matches.first?.lineNumber == 1)
+    }
+
+    @Test func safeURLAcceptsRootReachedThroughSymlinkAlias() async throws {
+        #if os(macOS) || os(Linux)
+        let realRoot = makeTemporaryDirectory()
+        let aliasParent = makeTemporaryDirectory()
+        let aliasRoot = aliasParent.appendingPathComponent("workspace-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: aliasRoot, withDestinationURL: realRoot)
+        let fs = try WorkspaceFS(rootURL: aliasRoot)
+
+        try fs.writeTextFile(path: "Sources/NewFile.swift", content: "let ok = true\n")
+
+        let created = realRoot.appendingPathComponent("Sources/NewFile.swift")
+        #expect(FileManager.default.fileExists(atPath: created.path))
+        #endif
     }
 }
 

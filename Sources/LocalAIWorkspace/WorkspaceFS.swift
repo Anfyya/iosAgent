@@ -11,6 +11,7 @@ public enum WorkspaceFSError: Error, LocalizedError {
     case binaryFile(String)
     case fileTooLarge(String)
     case missingFile(String)
+    case targetIsDirectory(String)
 
     public var errorDescription: String? {
         switch self {
@@ -34,6 +35,8 @@ public enum WorkspaceFSError: Error, LocalizedError {
             return "File is too large for inline context: \(path)"
         case let .missingFile(path):
             return "File does not exist: \(path)"
+        case let .targetIsDirectory(path):
+            return "Cannot save a file at a folder path: \(path)"
         }
     }
 }
@@ -57,7 +60,8 @@ public struct WorkspaceFS: Sendable {
         // Tool payloads are user/model generated, so reject backslashes up front instead of
         // trying to interpret mixed separator styles inside the iOS workspace sandbox.
         guard !normalizedInput.contains("\\") else { throw WorkspaceFSError.pathTraversal }
-        guard !normalizedInput.split(separator: "/").contains("..") else { throw WorkspaceFSError.pathTraversal }
+        let pathParts = normalizedInput.split(separator: "/").map(String.init)
+        guard !pathParts.contains(".."), !pathParts.contains(".") else { throw WorkspaceFSError.pathTraversal }
 
         let trimmedPath = normalizedInput.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmedPath.isEmpty else {
@@ -134,6 +138,11 @@ public struct WorkspaceFS: Sendable {
 
     public func writeTextFile(path: String, content: String, allowProtectedPaths: Bool = false) throws {
         let url = try safeURL(for: path, requiresProtectedPathAccess: allowProtectedPaths)
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            throw WorkspaceFSError.targetIsDirectory(path)
+        }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.data(using: .utf8)?.write(to: url)
     }
@@ -172,8 +181,18 @@ public struct WorkspaceFS: Sendable {
     }
 
     private func isWithinRoot(_ candidate: URL) -> Bool {
-        let path = candidate.standardizedFileURL.path
-        let rootPath = rootURL.path
-        return path == rootPath || path.hasPrefix(rootPath + "/")
+        let candidatePaths = [
+            candidate.standardizedFileURL.path,
+            candidate.standardizedFileURL.resolvingSymlinksInPath().path
+        ]
+        let rootPaths = [
+            rootURL.standardizedFileURL.path,
+            rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        ]
+        return candidatePaths.contains { candidatePath in
+            rootPaths.contains { rootPath in
+                candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+            }
+        }
     }
 }

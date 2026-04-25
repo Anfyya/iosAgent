@@ -133,10 +133,12 @@ struct RootView: View {
                         }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("创建") {
-                                model.createFile(at: newItemPath)
-                                newItemPath = ""
-                                showNewFileSheet = false
+                                if model.createFile(at: newItemPath) {
+                                    newItemPath = ""
+                                    showNewFileSheet = false
+                                }
                             }
+                            .disabled(newItemPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
             }
@@ -151,22 +153,31 @@ struct RootView: View {
                         }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("创建") {
-                                model.createFolder(at: newFolderPath)
-                                newFolderPath = ""
-                                showNewFolderSheet = false
+                                if model.createFolder(at: newFolderPath) {
+                                    newFolderPath = ""
+                                    showNewFolderSheet = false
+                                }
                             }
+                            .disabled(newFolderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
             }
         }
-        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.data, .folder], allowsMultipleSelection: true) { result in
-            if case let .success(urls) = result {
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            switch result {
+            case let .success(urls):
                 model.importFiles(from: urls, isZip: false)
+            case let .failure(error):
+                model.lastErrorMessage = "导入文件失败：\(error.localizedDescription)"
             }
         }
         .fileImporter(isPresented: $showZipImporter, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
-            if case let .success(urls) = result, let first = urls.first {
+            switch result {
+            case let .success(urls):
+                guard let first = urls.first else { return }
                 model.importFiles(from: [first], isZip: true)
+            case let .failure(error):
+                model.lastErrorMessage = "导入 ZIP 失败：\(error.localizedDescription)"
             }
         }
         .confirmationDialog("打开其他文件？", isPresented: .constant(model.pendingOpenFilePath != nil), actions: {
