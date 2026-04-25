@@ -1044,20 +1044,27 @@ private func makeWorkflowPatchCall() -> ToolCall {
     ])
 }
 
-private actor StubAIClient: AIClient {
+private final class StubAIClient: AIClient, @unchecked Sendable {
+    private let lock = NSLock()
     private var responses: [AIResponse]
 
     init(responses: [AIResponse]) {
         self.responses = responses
     }
 
-    func complete(profile: ProviderProfile, apiKey: String?, request: AIRequest) async throws -> AIResponse {
+    private func nextResponse() -> AIResponse {
+        lock.lock()
+        defer { lock.unlock() }
         return responses.isEmpty ? AIResponse(text: "done") : responses.removeFirst()
+    }
+
+    func complete(profile: ProviderProfile, apiKey: String?, request: AIRequest) async throws -> AIResponse {
+        nextResponse()
     }
 
     func streamComplete(profile: ProviderProfile, apiKey: String?, request: AIRequest) -> AsyncThrowingStream<AIClientStreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            let response = responses.isEmpty ? AIResponse(text: "done") : responses.removeFirst()
+            let response = self.nextResponse()
             if let rc = response.reasoningContent, !rc.isEmpty {
                 continuation.yield(.reasoningDelta(rc))
             }
