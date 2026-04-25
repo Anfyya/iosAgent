@@ -589,7 +589,7 @@ struct RootView: View {
                 } else {
                     GeometryReader { geometry in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 18) {
+                            LazyVStack(alignment: .leading, spacing: 18) {
                                 chatStatusStrip
 
                                 if let run = model.currentRun {
@@ -839,7 +839,7 @@ struct RootView: View {
                 .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 8) {
                         labelCapsule(title: agentRunStatusText(run.status))
                         labelCapsule(title: run.updatedAt.formatted(date: .abbreviated, time: .shortened))
@@ -970,24 +970,26 @@ struct RootView: View {
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? run.userTask.trimmingCharacters(in: .whitespacesAndNewlines)
         if firstUserMessage.isEmpty == false {
-            items.append(ChatBubbleItem(role: .user, text: firstUserMessage, secondaryText: nil))
+            items.append(ChatBubbleItem(id: "\(run.id.uuidString)-userTask-0", role: .user, text: firstUserMessage, secondaryText: nil))
         }
 
-        for message in run.messages where message.role == "user" || message.role == "assistant" {
+        for (index, message) in run.messages.enumerated() where message.role == "user" || message.role == "assistant" {
+            let itemID = "\(run.id.uuidString)-message-\(index)-\(message.role)"
             if message.role == "user" {
                 let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty,
                       text != firstUserMessage,
                       isInternalContextMessage(text) == false else { continue }
-                items.append(ChatBubbleItem(role: .user, text: text, secondaryText: nil))
+                items.append(ChatBubbleItem(id: itemID, role: .user, text: text, secondaryText: nil))
             } else if message.role == "assistant" {
                 let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reasoning = message.reasoningContent
                 let hasReasoning = reasoning?.isEmpty == false
                 guard (text.isEmpty == false || hasReasoning),
                       isInternalContextMessage(text) == false,
                       reasoning.map(isInternalContextMessage) != true else { continue }
                 items.append(ChatBubbleItem(
+                    id: itemID,
                     role: .assistant,
                     text: text,
                     secondaryText: reasoning,
@@ -999,11 +1001,11 @@ struct RootView: View {
         if let finalAnswer = run.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines),
            finalAnswer.isEmpty == false,
            items.last?.text != finalAnswer {
-            items.append(ChatBubbleItem(role: .assistant, text: finalAnswer, secondaryText: nil, isThinking: false))
+            items.append(ChatBubbleItem(id: "\(run.id.uuidString)-finalAnswer", role: .assistant, text: finalAnswer, secondaryText: nil, isThinking: false))
         }
         if let failureReason = run.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines),
            failureReason.isEmpty == false {
-            items.append(ChatBubbleItem(role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil, isThinking: false))
+            items.append(ChatBubbleItem(id: "\(run.id.uuidString)-failureReason", role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil, isThinking: false))
         }
         return items
     }

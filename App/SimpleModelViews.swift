@@ -1,5 +1,8 @@
 import LocalAIWorkspace
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ChatBubbleItem: Identifiable {
     enum Role {
@@ -7,7 +10,7 @@ struct ChatBubbleItem: Identifiable {
         case assistant
     }
 
-    let id = UUID()
+    let id: String
     let role: Role
     let text: String
     let secondaryText: String?
@@ -60,9 +63,7 @@ struct ChatBubble: View {
         return VStack(alignment: alignment, spacing: 6) {
             if hasReasoning {
                 DisclosureGroup(isExpanded: $thinkingExpanded) {
-                    Text(item.secondaryText ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    ReasoningText(content: item.secondaryText ?? "")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 4)
                 } label: {
@@ -96,6 +97,52 @@ struct ChatBubble: View {
         .foregroundStyle(foregroundStyle)
     }
 }
+
+#if canImport(UIKit)
+private struct ReasoningText: UIViewRepresentable {
+    let content: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.font = .preferredFont(forTextStyle: .caption1)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = .secondaryLabel
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != content {
+            uiView.text = content
+        }
+        uiView.font = .preferredFont(forTextStyle: .caption1)
+        uiView.textColor = .secondaryLabel
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let targetSize = CGSize(width: max(width, 0), height: .greatestFiniteMagnitude)
+        let fittingSize = uiView.sizeThatFits(targetSize)
+        return CGSize(width: width, height: fittingSize.height)
+    }
+}
+#else
+private struct ReasoningText: View {
+    let content: String
+
+    var body: some View {
+        Text(content)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}
+#endif
 
 struct SimpleModelEditorSheet: View {
     @Environment(\.dismiss) private var dismiss

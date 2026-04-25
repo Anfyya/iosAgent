@@ -264,6 +264,16 @@ public struct AgentLoop: Sendable {
             var fullText = ""
             var fullReasoning = ""
             var toolCallBuilders: [Int: (id: String?, name: String, arguments: String)] = [:]
+            let streamUpdateInterval: TimeInterval = 0.08
+            var lastStreamUpdate = Date.distantPast
+
+            func emitStreamUpdate(force: Bool = false) {
+                guard let onStreamUpdate else { return }
+                let now = Date()
+                guard force || now.timeIntervalSince(lastStreamUpdate) >= streamUpdateInterval else { return }
+                lastStreamUpdate = now
+                onStreamUpdate(run)
+            }
 
             // Pre-append an empty assistant message to be filled by stream deltas.
             let assistantMsgIdx = run.messages.count
@@ -277,12 +287,12 @@ public struct AgentLoop: Sendable {
                     fullText += text
                     run.messages[assistantMsgIdx].content = fullText
                     run.status = .running
-                    onStreamUpdate?(run)
+                    emitStreamUpdate()
 
                 case .reasoningDelta(let rc):
                     fullReasoning += rc
                     run.messages[assistantMsgIdx].reasoningContent = fullReasoning
-                    onStreamUpdate?(run)
+                    emitStreamUpdate()
 
                 case .toolCallDelta(let idx, let id, let name, let args):
                     if var existing = toolCallBuilders[idx] {
@@ -324,6 +334,7 @@ public struct AgentLoop: Sendable {
             run.messages[assistantMsgIdx].content = fullText
             run.messages[assistantMsgIdx].reasoningContent = fullReasoning.isEmpty ? nil : fullReasoning
             run.messages[assistantMsgIdx].toolCalls = parsedToolCalls.isEmpty ? nil : parsedToolCalls
+            emitStreamUpdate(force: true)
 
             if parsedToolCalls.isEmpty {
                 run.finalAnswer = fullText
