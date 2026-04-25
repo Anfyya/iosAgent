@@ -821,14 +821,11 @@ struct RootView: View {
     private func sendChatInput() async {
         let draft = model.chatInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard draft.isEmpty == false else { return }
+        model.chatInput = ""
         if model.currentRun?.status == .waitingForUser {
-            model.questionAnswer = draft
-            await model.answerQuestion()
+            await model.answerQuestion(answer: draft)
         } else {
-            await model.startChat()
-        }
-        if model.lastErrorMessage == nil {
-            model.chatInput = ""
+            await model.startChat(task: draft)
         }
     }
 
@@ -846,21 +843,30 @@ struct RootView: View {
     }
 
     private func chatBubbleItems(for run: AgentRun) -> [ChatBubbleItem] {
-        run.messages.compactMap { message in
-            guard message.role == "user" || message.role == "assistant" else { return nil }
-            if message.role == "assistant", message.content.isEmpty, let toolCalls = message.toolCalls, toolCalls.isEmpty == false {
-                return ChatBubbleItem(
-                    role: .assistant,
-                    text: "调用工具：\(toolCalls.map(\.name).joined(separator: ", "))",
-                    secondaryText: message.reasoningContent
-                )
+        var items: [ChatBubbleItem] = [
+            ChatBubbleItem(role: .user, text: run.userTask, secondaryText: nil)
+        ]
+
+        for message in run.messages where message.role == "assistant" {
+            let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasReasoning = reasoning?.isEmpty == false
+            guard text.isEmpty == false || hasReasoning else {
+                continue
             }
-            return ChatBubbleItem(
-                role: message.role == "user" ? .user : .assistant,
-                text: message.content,
-                secondaryText: message.reasoningContent
-            )
+            items.append(ChatBubbleItem(role: .assistant, text: text, secondaryText: reasoning))
         }
+
+        if let finalAnswer = run.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines),
+           finalAnswer.isEmpty == false,
+           items.last?.text != finalAnswer {
+            items.append(ChatBubbleItem(role: .assistant, text: finalAnswer, secondaryText: nil))
+        }
+        if let failureReason = run.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines),
+           failureReason.isEmpty == false {
+            items.append(ChatBubbleItem(role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil))
+        }
+        return items
     }
 
     private func labelCapsule(title: String) -> some View {
@@ -1190,37 +1196,39 @@ struct RootView: View {
         NavigationStack {
             List {
                 Section("模型") {
-                    ForEach(model.providerProfiles) { profile in
+                    Picker(
+                        "当前模型",
+                        selection: Binding(
+                            get: { model.activeProvider?.id ?? "" },
+                            set: { model.assignProvider($0.isEmpty ? nil : $0) }
+                        )
+                    ) {
+                        ForEach(model.providerProfiles) { profile in
+                            Text(profile.name).tag(profile.id)
+                        }
+                    }
+
+                    if let profile = model.activeProvider {
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(profile.name)
-                                Spacer()
-                                if model.activeProvider?.id == profile.id {
-                                    Text("当前使用")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
                             Text(profile.baseURL)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Text(profile.modelProfiles.first?.id ?? "")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
-                            HStack {
-                                Button("编辑") {
-                                    editingProvider = profile
-                                    providerAPIKey = ""
-                                    showProviderEditor = true
-                                }
-                                Button("使用") { model.assignProvider(profile.id) }
-                                Button("测试") { Task { await model.testConnection(profile: profile, apiKey: nil) } }
-                                Button("删除", role: .destructive) { model.deleteProvider(profile, deleteSecret: true) }
-                            }
-                            .font(.caption)
+                        }
+
+                        Button("编辑当前模型") {
+                            editingProvider = profile
+                            providerAPIKey = ""
+                            showProviderEditor = true
+                        }
+                        Button("测试当前模型") {
+                            Task { await model.testConnection(profile: profile, apiKey: nil) }
                         }
                     }
-                    Button("添加模型") {
+
+                    Button("添加自定义模型") {
                         editingProvider = nil
                         providerAPIKey = ""
                         showProviderEditor = true

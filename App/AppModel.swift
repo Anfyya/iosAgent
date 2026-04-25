@@ -307,9 +307,17 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "新文件路径不能为空。"
             return
         }
+        guard selectedWorkspace != nil else {
+            lastErrorMessage = "请先选择项目。"
+            return
+        }
         if updateFileSystem({ fs in
             try fs.writeTextFile(path: trimmed, content: contents)
         }) {
+            selectedFilePath = trimmed
+            editorText = contents
+            hasUnsavedChanges = false
+            importStatusMessage = "已创建文件：\(trimmed)"
             try? log(action: "file_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
         }
     }
@@ -320,10 +328,15 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "新文件夹路径不能为空。"
             return
         }
+        guard selectedWorkspace != nil else {
+            lastErrorMessage = "请先选择项目。"
+            return
+        }
         if updateFileSystem({ fs in
             let url = try fs.safeURL(for: trimmed)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }) {
+            importStatusMessage = "已创建文件夹：\(trimmed)"
             try? log(action: "folder_created", workspaceID: selectedWorkspace?.id, metadata: ["path": .string(trimmed)])
         }
     }
@@ -527,7 +540,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func startChat() async {
+    func startChat(task: String? = nil) async {
+        let taskText = (task ?? chatInput).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard taskText.isEmpty == false else { return }
         guard let workspace = selectedWorkspace else {
             lastErrorMessage = "请先选择项目。"
             return
@@ -537,17 +552,17 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            let snapshot = try buildAndPersistContextSnapshot(for: workspace)
+            let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: taskText)
             currentContextSnapshot = snapshot
             let prompt = promptBuilder.build(
                 snapshot: snapshot,
-                userTask: chatInput,
+                userTask: taskText,
                 toolSchemas: SupportedTools.schemas,
                 permissionRules: makePermissionRules(),
                 activeProvider: profile,
                 activeModel: model,
                 workspace: workspace,
-                additionalUserRequirements: chatInput
+                additionalUserRequirements: taskText
             )
             let loop = try makeAgentLoop(for: workspace)
             let run = try await loop.start(
@@ -556,12 +571,12 @@ final class AppModel: ObservableObject {
                 apiKey: try apiKeyForProfile(profile),
                 modelID: model.id,
                 systemPrompt: prompt.systemMessage,
-                userTask: chatInput,
+                userTask: taskText,
                 initialMessages: prompt.messages,
-                contextRequest: makeContextRequest(for: workspace),
+                contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
                 requestOptions: agentRequestOptions(for: model)
             )
-            try log(action: "chat_started", workspaceID: workspace.id, metadata: ["task": .string(chatInput)])
+            try log(action: "chat_started", workspaceID: workspace.id, metadata: ["task": .string(taskText)])
             handle(run: run, profile: profile, model: model, snapshot: snapshot)
         } catch {
             present(error)
@@ -581,17 +596,19 @@ final class AppModel: ObservableObject {
         selectedTab = .chat
     }
 
-    func answerQuestion() async {
+    func answerQuestion(answer: String? = nil) async {
         guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
+        let answerText = (answer ?? questionAnswer).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard answerText.isEmpty == false else { return }
         do {
-            let snapshot = try buildAndPersistContextSnapshot(for: workspace)
+            let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: run.userTask)
             let loop = try makeAgentLoop(for: workspace)
             let updated = try await loop.resume(
                 runID: run.id,
-                answer: questionAnswer,
+                answer: answerText,
                 profile: profile,
                 apiKey: try apiKeyForProfile(profile),
-                contextRequest: makeContextRequest(for: workspace),
+                contextRequest: makeContextRequest(for: workspace, currentTask: run.userTask),
                 requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
             )
             questionAnswer = ""
@@ -606,14 +623,14 @@ final class AppModel: ObservableObject {
     func resumePermission(approved: Bool) async {
         guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
         do {
-            let snapshot = try buildAndPersistContextSnapshot(for: workspace)
+            let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: run.userTask)
             let loop = try makeAgentLoop(for: workspace)
             let updated = try await loop.resumePermission(
                 runID: run.id,
                 approved: approved,
                 profile: profile,
                 apiKey: try apiKeyForProfile(profile),
-                contextRequest: makeContextRequest(for: workspace),
+                contextRequest: makeContextRequest(for: workspace, currentTask: run.userTask),
                 requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
             )
             try log(action: approved ? "permission_approved" : "permission_denied", workspaceID: workspace.id, metadata: ["tool": .string(run.pendingPermissionRequest?.name ?? "unknown")])
@@ -814,7 +831,8 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func makeContextRequest(for workspace: Workspace) -> ContextBuildRequest {
+    private func makeContextRequest(for workspace: Workspace, currentTask: String? = nil) -> ContextBuildRequest {
+        let taskText = currentTask ?? chatInput
         ContextBuildRequest(
             systemPrompt: "安全的本地优先 iOS 项目助手。遵循稳定前缀块，并且只允许修改当前项目内的文件。",
             toolSchemaText: SupportedTools.schemas.sorted(by: { $0.name < $1.name }).map { "\($0.name): \($0.description)" }.joined(separator: "\n"),
@@ -822,12 +840,12 @@ final class AppModel: ObservableObject {
             projectRules: "只允许编辑当前项目目录内的文件。不要访问 Keychain、API Key 或项目外部路径。项目外文件永远不能修改。",
             dependencySummary: "SwiftUI App 壳 + LocalAIWorkspace 核心服务 + GitHub 同步/Actions + 自动补丁应用权限流。",
             aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch，并且只能修改当前项目内文件。",
-            currentTask: chatInput,
+            currentTask: taskText,
             openedFiles: currentOpenedFiles(),
             relatedSnippets: contentSearchResults,
             currentDiff: patchQueue.first?.changes.map { $0.diff ?? $0.newContent ?? "" }.joined(separator: "\n\n") ?? "",
             ciLogs: githubStatusMessage ?? "",
-            userRequirements: chatInput
+            userRequirements: taskText
         )
     }
 
@@ -847,9 +865,9 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func buildAndPersistContextSnapshot(for workspace: Workspace) throws -> ContextSnapshot {
+    private func buildAndPersistContextSnapshot(for workspace: Workspace, currentTask: String? = nil) throws -> ContextSnapshot {
         let fs = try workspaceManager.workspaceFS(for: workspace)
-        let request = makeContextRequest(for: workspace)
+        let request = makeContextRequest(for: workspace, currentTask: currentTask)
         let snapshot = try contextEngine.buildContext(using: request, workspaceFS: fs)
         let url = workspaceManager.mobiledevURL(for: workspace.id).appendingPathComponent("context/latest_snapshot.json")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

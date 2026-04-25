@@ -12,16 +12,16 @@ enum ModelPermissionMode: String, Codable, CaseIterable, Identifiable {
         case .fullAccess:
             return "全权限"
         case .readOnly:
-            return "Read-Only"
+            return "确认模式"
         }
     }
 
     var summary: String {
         switch self {
         case .fullAccess:
-            return "允许模型直接修改项目内文件，可调用全部已开放工具。"
+            return "模型提出的文件补丁会自动应用到当前项目。"
         case .readOnly:
-            return "默认只读，所有写入、删除和重命名都要用户确认。"
+            return "写入、删除和重命名需要先确认。"
         }
     }
 
@@ -81,7 +81,7 @@ struct AppPreferences: Codable, Hashable {
 
     init(
         selectedProviderID: String? = nil,
-        permissionMode: ModelPermissionMode = .readOnly,
+        permissionMode: ModelPermissionMode = .fullAccess,
         defaultReasoningEffort: ReasoningEffortPreset = .high
     ) {
         self.selectedProviderID = selectedProviderID

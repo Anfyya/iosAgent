@@ -32,6 +32,7 @@ public struct PromptBuilder: Sendable {
             "- Never access paths outside workspace/files.",
             "Tool usage:",
             "- Prefer list_files/read_file/search_in_files/get_context_status before proposing changes.",
+            "- When the user asks to change files, use propose_patch with concrete file changes; do not only describe what should change.",
             "- ask_question must be blocking when clarification is required.",
             "- propose_patch must include a precise title, reason, and concrete file changes.",
             "Patch format:",

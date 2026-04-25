@@ -44,10 +44,9 @@ struct ChatBubble: View {
         background: AnyShapeStyle,
         borderColor: Color? = nil
     ) -> some View {
+        let hasSecondaryText = item.secondaryText?.isEmpty == false
         VStack(alignment: alignment, spacing: 6) {
-            Text(item.text.isEmpty ? " " : item.text)
-                .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
-            if let secondaryText = item.secondaryText, secondaryText.isEmpty == false {
+            if let secondaryText = item.secondaryText, hasSecondaryText {
                 Text(secondaryText)
                     .font(.caption)
                     .foregroundStyle(
@@ -55,6 +54,10 @@ struct ChatBubble: View {
                             ? AnyShapeStyle(.secondary)
                             : AnyShapeStyle(Color.white.opacity(0.78))
                     )
+                    .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+            }
+            if item.text.isEmpty == false || hasSecondaryText == false {
+                Text(item.text.isEmpty ? " " : item.text)
                     .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
             }
         }
