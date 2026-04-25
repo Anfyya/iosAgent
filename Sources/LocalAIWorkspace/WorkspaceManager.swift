@@ -64,7 +64,9 @@ public struct WorkspaceManager: Sendable {
         return try contents.compactMap { url in
             let metadataURL = url.appendingPathComponent(".mobiledev/workspace.json")
             guard FileManager.default.fileExists(atPath: metadataURL.path) else { return nil }
-            return try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
+            var workspace = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
+            workspace.rootPath = filesURL(for: workspace.id).path
+            return workspace
         }
         .sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
     }
@@ -108,7 +110,7 @@ public struct WorkspaceManager: Sendable {
     }
 
     public func workspaceFS(for workspace: Workspace) throws -> WorkspaceFS {
-        try WorkspaceFS(rootURL: URL(fileURLWithPath: workspace.rootPath, isDirectory: true))
+        try WorkspaceFS(rootURL: filesURL(for: workspace.id), isDirectory: true)
     }
 
     public func workspaceURL(for id: UUID) -> URL {
@@ -126,7 +128,9 @@ public struct WorkspaceManager: Sendable {
     public func loadWorkspace(id: UUID) throws -> Workspace {
         let metadataURL = mobiledevURL(for: id).appendingPathComponent("workspace.json")
         guard FileManager.default.fileExists(atPath: metadataURL.path) else { throw WorkspaceManagerError.missingWorkspace(id) }
-        return try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
+        var workspace = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: metadataURL))
+        workspace.rootPath = filesURL(for: id).path
+        return workspace
     }
 
     public func saveWorkspaceMetadata(_ workspace: Workspace) throws {

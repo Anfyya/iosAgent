@@ -629,8 +629,15 @@ struct RootView: View {
                                                 .font(.headline)
                                             Text(run.pendingPermissionDecision?.reason ?? "")
                                                 .foregroundStyle(.secondary)
-                                            Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
-                                                .font(.caption.monospaced())
+                                                .font(.subheadline)
+
+                                            if request.name == "propose_patch" {
+                                                patchPermissionPreview(for: request)
+                                            } else {
+                                                Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
+                                                    .font(.caption.monospaced())
+                                            }
+
                                             HStack {
                                                 Button("允许一次") { Task { await model.resumePermission(approved: true) } }
                                                 Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
@@ -883,8 +890,9 @@ struct RootView: View {
     }
 
     private func chatHistoryTitle(_ run: AgentRun) -> String {
-        let title = run.userTask.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "未命名对话" : title
+        let title = run.userTask.split(separator: "\n").first.map(String.init) ?? run.userTask
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "未命名对话" : String(trimmed.prefix(60))
     }
 
     private func chatHistoryRow(_ run: AgentRun) -> some View {
@@ -937,7 +945,7 @@ struct RootView: View {
         if model.currentRun?.status == .waitingForUser {
             await model.answerQuestion(answer: draft)
         } else {
-            await model.startChat(task: draft)
+            await model.sendMessage(draft)
         }
     }
 
@@ -955,28 +963,36 @@ struct RootView: View {
     }
 
     private func chatBubbleItems(for run: AgentRun) -> [ChatBubbleItem] {
-        var items: [ChatBubbleItem] = [
-            ChatBubbleItem(role: .user, text: run.userTask, secondaryText: nil)
-        ]
+        let isLive = run.status == .running
+        var items: [ChatBubbleItem] = []
 
-        for message in run.messages where message.role == "assistant" {
-            let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let hasReasoning = reasoning?.isEmpty == false
-            guard text.isEmpty == false || hasReasoning else {
-                continue
+        for message in run.messages where message.role == "user" || message.role == "assistant" {
+            if message.role == "user" {
+                let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                items.append(ChatBubbleItem(role: .user, text: text, secondaryText: nil))
+            } else if message.role == "assistant" {
+                let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasReasoning = reasoning?.isEmpty == false
+                guard text.isEmpty == false || hasReasoning else { continue }
+                items.append(ChatBubbleItem(
+                    role: .assistant,
+                    text: text,
+                    secondaryText: reasoning,
+                    isThinking: isLive && hasReasoning
+                ))
             }
-            items.append(ChatBubbleItem(role: .assistant, text: text, secondaryText: reasoning))
         }
 
         if let finalAnswer = run.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines),
            finalAnswer.isEmpty == false,
            items.last?.text != finalAnswer {
-            items.append(ChatBubbleItem(role: .assistant, text: finalAnswer, secondaryText: nil))
+            items.append(ChatBubbleItem(role: .assistant, text: finalAnswer, secondaryText: nil, isThinking: false))
         }
         if let failureReason = run.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines),
            failureReason.isEmpty == false {
-            items.append(ChatBubbleItem(role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil))
+            items.append(ChatBubbleItem(role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil, isThinking: false))
         }
         return items
     }
@@ -1928,6 +1944,93 @@ private func convertJSONAny(_ object: Any) -> JSONValue {
         return .null
     }
 }
+
+    @ViewBuilder
+    private func patchPermissionPreview(for request: ToolCall) -> some View {
+        let title = request.arguments["title"]?.stringDescription ?? ""
+        let reason = request.arguments["reason"]?.stringDescription ?? ""
+        let changes = parsePatchChanges(from: request.arguments["changes"])
+
+        VStack(alignment: .leading, spacing: 6) {
+            if !title.isEmpty {
+                Text(title)
+                    .font(.headline)
+            }
+            if !reason.isEmpty {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(changes.indices, id: \.self) { idx in
+                let change = changes[idx]
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(changeOpLabel(change.op))
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(changeOpColor(change.op), in: Capsule())
+                            .foregroundStyle(.white)
+                        Text(change.path)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.primary)
+                    }
+                    if let diff = change.diff, !diff.isEmpty {
+                        DiffViewer(diff: diff)
+                            .frame(maxHeight: 160)
+                    } else if let content = change.newContent, !content.isEmpty {
+                        Text(content)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(6)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Text("共 \(changes.count) 个文件")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private struct ParsedPatchChange {
+        let path: String
+        let op: String
+        let diff: String?
+        let newContent: String?
+    }
+
+    private func parsePatchChanges(from value: JSONValue?) -> [ParsedPatchChange] {
+        guard case let .array(items)? = value else { return [] }
+        return items.compactMap { item in
+            guard case let .object(obj) = item else { return nil }
+            let path = obj["path"]?.stringDescription ?? ""
+            let op = obj["operation"]?.stringDescription ?? "modify"
+            let diff = obj["diff"]?.stringDescription
+            let newContent = obj["newContent"]?.stringDescription
+            return ParsedPatchChange(path: path, op: op, diff: diff, newContent: newContent)
+        }
+    }
+
+    private func changeOpLabel(_ op: String) -> String {
+        switch op {
+        case "create": return "新增"
+        case "delete": return "删除"
+        case "rename": return "重命名"
+        default: return "修改"
+        }
+    }
+
+    private func changeOpColor(_ op: String) -> Color {
+        switch op {
+        case "create": return .green
+        case "delete": return .red
+        case "rename": return .blue
+        default: return .orange
+        }
+    }
 
 private func jsonString(_ value: JSONValue) -> String {
     switch value {

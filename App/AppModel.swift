@@ -544,8 +544,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func startChat(task: String? = nil) async {
-        let taskText = (task ?? chatInput).trimmingCharacters(in: .whitespacesAndNewlines)
+    func sendMessage(_ text: String? = nil) async {
+        let taskText = (text ?? chatInput).trimmingCharacters(in: .whitespacesAndNewlines)
         guard taskText.isEmpty == false else { return }
         guard let workspace = selectedWorkspace else {
             lastErrorMessage = "请先选择项目。"
@@ -558,32 +558,46 @@ final class AppModel: ObservableObject {
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: taskText)
             currentContextSnapshot = snapshot
-            let prompt = promptBuilder.build(
-                snapshot: snapshot,
-                userTask: taskText,
-                toolSchemas: SupportedTools.schemas,
-                permissionRules: makePermissionRules(),
-                activeProvider: profile,
-                activeModel: model,
-                workspace: workspace,
-                additionalUserRequirements: taskText
-            )
             let loop = try makeAgentLoop(for: workspace)
-            let run = try await loop.start(
-                workspaceID: workspace.id,
-                profile: profile,
-                apiKey: try apiKeyForProfile(profile),
-                modelID: model.id,
-                systemPrompt: prompt.systemMessage,
-                userTask: taskText,
-                initialMessages: prompt.messages,
-                contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
-                requestOptions: agentRequestOptions(for: model)
-            )
-            try log(action: "chat_started", workspaceID: workspace.id, metadata: ["task": .string(taskText)])
+            let run: AgentRun
+            if let currentRun, currentRun.status == .completed || currentRun.status == .failed || currentRun.status == .cancelled {
+                run = try await loop.continueConversation(
+                    runID: currentRun.id,
+                    message: taskText,
+                    profile: profile,
+                    apiKey: try apiKeyForProfile(profile),
+                    contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
+                    requestOptions: agentRequestOptions(for: model)
+                )
+            } else if currentRun == nil || currentRun?.status == .failed || currentRun?.status == .cancelled {
+                let prompt = promptBuilder.build(
+                    snapshot: snapshot,
+                    userTask: taskText,
+                    toolSchemas: SupportedTools.schemas,
+                    permissionRules: makePermissionRules(),
+                    activeProvider: profile,
+                    activeModel: model,
+                    workspace: workspace,
+                    additionalUserRequirements: taskText
+                )
+                run = try await loop.start(
+                    workspaceID: workspace.id,
+                    profile: profile,
+                    apiKey: try apiKeyForProfile(profile),
+                    modelID: model.id,
+                    systemPrompt: prompt.systemMessage,
+                    userTask: taskText,
+                    initialMessages: prompt.messages,
+                    contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
+                    requestOptions: agentRequestOptions(for: model)
+                )
+            } else {
+                return
+            }
+            try log(action: "chat_message", workspaceID: workspace.id, metadata: ["task": .string(taskText)])
             handle(run: run, profile: profile, model: model, snapshot: snapshot)
         } catch {
-            present(error, context: "对话启动失败")
+            present(error, context: "对话失败")
         }
     }
 
@@ -853,12 +867,12 @@ final class AppModel: ObservableObject {
     private func makeContextRequest(for workspace: Workspace, currentTask: String? = nil) -> ContextBuildRequest {
         let taskText = currentTask ?? chatInput
         return ContextBuildRequest(
-            systemPrompt: "安全的本地优先 iOS 项目助手。遵循稳定前缀块，并且只允许修改当前项目内的文件。",
+            systemPrompt: "安全的本地优先 iOS 项目助手。遵循稳定前缀块，并且只允许修改当前项目内的文件。你必须用简体中文思考和回复用户。",
             toolSchemaText: SupportedTools.schemas.sorted(by: { $0.name < $1.name }).map { "\($0.name): \($0.description)" }.joined(separator: "\n"),
             permissionRules: makePermissionRules(),
             projectRules: "只允许编辑当前项目目录内的文件。不要访问 Keychain、API Key 或项目外部路径。项目外文件永远不能修改。",
             dependencySummary: "SwiftUI App 壳 + LocalAIWorkspace 核心服务 + GitHub 同步/Actions + 自动补丁应用权限流。",
-            aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch，并且只能修改当前项目内文件。",
+            aiMemory: "需求不明确时使用 ask_question；任何修改都必须使用 propose_patch，并且只能修改当前项目内文件。全程用中文回复。",
             currentTask: taskText,
             openedFiles: currentOpenedFiles(),
             relatedSnippets: contentSearchResults,

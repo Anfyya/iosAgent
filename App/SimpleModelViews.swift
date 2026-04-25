@@ -11,10 +11,17 @@ struct ChatBubbleItem: Identifiable {
     let role: Role
     let text: String
     let secondaryText: String?
+    var isThinking: Bool = false
 }
 
 struct ChatBubble: View {
     let item: ChatBubbleItem
+    @State private var thinkingExpanded: Bool
+
+    init(item: ChatBubbleItem) {
+        self.item = item
+        _thinkingExpanded = State(initialValue: item.isThinking)
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
@@ -36,6 +43,11 @@ struct ChatBubble: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .onChange(of: item.isThinking) { newValue in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                thinkingExpanded = newValue
+            }
+        }
     }
 
     private func bubble(
@@ -44,19 +56,31 @@ struct ChatBubble: View {
         background: AnyShapeStyle,
         borderColor: Color? = nil
     ) -> some View {
-        let hasSecondaryText = item.secondaryText?.isEmpty == false
+        let hasReasoning = item.secondaryText?.isEmpty == false
         return VStack(alignment: alignment, spacing: 6) {
-            if let secondaryText = item.secondaryText, hasSecondaryText {
-                Text(secondaryText)
-                    .font(.caption)
-                    .foregroundStyle(
-                        item.role == .assistant
-                            ? AnyShapeStyle(.secondary)
-                            : AnyShapeStyle(Color.white.opacity(0.78))
-                    )
-                    .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
+            if hasReasoning {
+                DisclosureGroup(isExpanded: $thinkingExpanded) {
+                    Text(item.secondaryText ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: thinkingExpanded ? "brain.head.profile.fill" : "brain.head.profile")
+                            .font(.caption)
+                        Text(thinkingExpanded ? "正在思考…" : "思考过程")
+                            .font(.caption.weight(.medium))
+                        if !thinkingExpanded {
+                            Text("(\(item.secondaryText?.count ?? 0) 字)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
             }
-            if item.text.isEmpty == false || hasSecondaryText == false {
+            if item.text.isEmpty == false || !hasReasoning {
                 Text(item.text.isEmpty ? " " : item.text)
                     .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
             }

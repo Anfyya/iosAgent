@@ -23,6 +23,7 @@ public struct PromptBuilder: Sendable {
         ].joined(separator: " ")
         let systemMessage = [
             "You are a local-first engineering workspace assistant.",
+            "Language: You MUST think and respond in Chinese (Simplified Chinese / 简体中文). Always use Chinese for reasoning, explanations, and all user-facing text.",
             "Security rules:",
             "- Do not modify files the user did not request.",
             "- If requirements are ambiguous or out of scope, call ask_question before proceeding.",

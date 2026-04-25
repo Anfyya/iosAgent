@@ -165,6 +165,27 @@ public struct AgentLoop: Sendable {
         return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest, requestOptions: requestOptions)
     }
 
+    public func continueConversation(
+        runID: UUID,
+        message: String,
+        profile: ProviderProfile,
+        apiKey: String?,
+        contextRequest: ContextBuildRequest? = nil,
+        requestOptions: AgentRequestOptions = AgentRequestOptions()
+    ) async throws -> AgentRun {
+        guard var run = try runStore.run(id: runID) else {
+            throw AgentLoopError.missingRun(runID)
+        }
+        run.pendingQuestion = nil
+        run.pendingPermissionRequest = nil
+        run.pendingPermissionDecision = nil
+        run.status = .running
+        run.messages.append(AIMessage(role: "user", content: message))
+        run.userTask = run.userTask + "\n---\n" + message
+        try save(&run)
+        return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest, requestOptions: requestOptions)
+    }
+
     public func resumePermission(
         runID: UUID,
         approved: Bool,
