@@ -1291,16 +1291,16 @@ private final class StubWebToolClient: WebToolClient, @unchecked Sendable {
     }
 
     func postJSON(url: URL, headers: [String: String], body: [String: JSONValue]) async throws -> WebToolHTTPResponse {
-        lock.lock()
-        requests.append(RecordedWebRequest(url: url, headers: headers, body: body))
-        lock.unlock()
+        lock.withLock {
+            requests.append(RecordedWebRequest(url: url, headers: headers, body: body))
+        }
         return response
     }
 
     func recordedRequests() -> [RecordedWebRequest] {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests
+        lock.withLock {
+            return requests
+        }
     }
 }
 
