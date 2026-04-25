@@ -776,23 +776,36 @@ struct RootView: View {
     private var chatHistorySheet: some View {
         NavigationStack {
             List {
-                Section("历史记录") {
-                    if model.chatHistory.isEmpty {
-                        ContentUnavailableView("暂无历史记录", systemImage: "clock")
-                    }
-                    ForEach(model.chatHistory) { run in
-                        Button {
-                            model.selectChatRun(run)
-                            showChatHistorySheet = false
-                        } label: {
-                            chatHistoryRow(run)
+                if model.chatHistory.isEmpty {
+                    ContentUnavailableView("暂无历史对话", systemImage: "clock")
+                } else {
+                    Section("会话") {
+                        ForEach(model.chatHistory) { run in
+                            NavigationLink {
+                                chatHistoryConversationView(run)
+                            } label: {
+                                chatHistoryRow(run)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button("删除", role: .destructive) {
+                                    model.deleteChatRun(run)
+                                }
+                            }
+                            .contextMenu {
+                                Button("打开") {
+                                    model.selectChatRun(run)
+                                    showChatHistorySheet = false
+                                }
+                                Button("删除", role: .destructive) {
+                                    model.deleteChatRun(run)
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("对话历史")
+            .navigationTitle("历史对话")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -802,20 +815,108 @@ struct RootView: View {
         }
     }
 
-    private func chatHistoryRow(_ run: AgentRun) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(run.userTask.isEmpty ? "未命名对话" : run.userTask)
-                .font(.body.weight(.medium))
-                .lineLimit(2)
-            HStack(spacing: 8) {
-                Text(agentRunStatusText(run.status))
-                Text(run.updatedAt.formatted(date: .abbreviated, time: .shortened))
+    private func chatHistoryConversationView(_ run: AgentRun) -> some View {
+        ZStack {
+            Color(uiColor: .systemGroupedBackground)
+                .ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 8) {
+                        labelCapsule(title: agentRunStatusText(run.status))
+                        labelCapsule(title: run.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+
+                    ForEach(chatBubbleItems(for: run)) { item in
+                        ChatBubble(item: item)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(14)
+                .padding(.bottom, 78)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .navigationTitle(chatHistoryTitle(run))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    model.selectChatRun(run)
+                    showChatHistorySheet = false
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.right")
+                }
+                Button(role: .destructive) {
+                    model.deleteChatRun(run)
+                    showChatHistorySheet = false
+                } label: {
+                    Image(systemName: "trash")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Button {
+                model.selectChatRun(run)
+                showChatHistorySheet = false
+            } label: {
+                Text("继续此对话")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .foregroundStyle(.white)
+            }
+            .padding(12)
+            .background(.regularMaterial)
+        }
+    }
+
+    private func chatHistoryTitle(_ run: AgentRun) -> String {
+        let title = run.userTask.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "未命名对话" : title
+    }
+
+    private func chatHistoryRow(_ run: AgentRun) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.title3)
+                .foregroundStyle(.blue)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(chatHistoryTitle(run))
+                    .font(.body.weight(.medium))
+                    .lineLimit(2)
+                if let preview = chatHistoryPreview(run) {
+                    Text(preview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Text(agentRunStatusText(run.status))
+                    Text(run.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
+    }
+
+    private func chatHistoryPreview(_ run: AgentRun) -> String? {
+        if let finalAnswer = run.finalAnswer?.trimmingCharacters(in: .whitespacesAndNewlines),
+           finalAnswer.isEmpty == false {
+            return finalAnswer
+        }
+        if let text = run.messages.reversed().first(where: { $0.role == "assistant" && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false })?.content.trimmingCharacters(in: .whitespacesAndNewlines),
+           text.isEmpty == false {
+            return text
+        }
+        return nil
     }
 
     private func sendChatInput() async {

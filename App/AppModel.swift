@@ -312,7 +312,7 @@ final class AppModel: ObservableObject {
             return
         }
         if updateFileSystem({ fs in
-            try fs.writeTextFile(path: trimmed, content: contents)
+            try fs.writeTextFile(path: trimmed, content: contents, allowProtectedPaths: true)
         }) {
             selectedFilePath = trimmed
             editorText = contents
@@ -333,7 +333,7 @@ final class AppModel: ObservableObject {
             return
         }
         if updateFileSystem({ fs in
-            let url = try fs.safeURL(for: trimmed)
+            let url = try fs.safeURL(for: trimmed, requiresProtectedPathAccess: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }) {
             importStatusMessage = "已创建文件夹：\(trimmed)"
@@ -381,7 +381,7 @@ final class AppModel: ObservableObject {
     func saveSelectedFile() -> Bool {
         guard let path = selectedFilePath else { return false }
         let didSave = updateFileSystem { fs in
-            try fs.writeTextFile(path: path, content: editorText)
+            try fs.writeTextFile(path: path, content: editorText, allowProtectedPaths: true)
         }
         if didSave {
             hasUnsavedChanges = false
@@ -398,7 +398,7 @@ final class AppModel: ObservableObject {
             return
         }
         if updateFileSystem({ fs in
-            try fs.moveItem(from: source, to: trimmed)
+            try fs.moveItem(from: source, to: trimmed, allowProtectedPaths: true)
         }) {
             pendingRenamePath = nil
             try? log(action: "file_renamed", workspaceID: selectedWorkspace?.id, metadata: ["from": .string(source), "to": .string(trimmed)])
@@ -408,7 +408,7 @@ final class AppModel: ObservableObject {
     func deletePendingPath() {
         guard let path = pendingDeletePath else { return }
         if updateFileSystem({ fs in
-            try fs.deleteItem(path: path)
+            try fs.deleteItem(path: path, allowProtectedPaths: true)
         }) {
             if selectedFilePath == path {
                 selectedFilePath = nil
@@ -594,6 +594,21 @@ final class AppModel: ObservableObject {
         questionAnswer = ""
         chatInput = ""
         selectedTab = .chat
+    }
+
+    func deleteChatRun(_ run: AgentRun) {
+        do {
+            try agentRunStore(for: run.workspaceID).delete(id: run.id)
+            chatHistory.removeAll { $0.id == run.id }
+            if currentRun?.id == run.id {
+                currentRun = nil
+                questionAnswer = ""
+                chatInput = ""
+            }
+            try log(action: "chat_deleted", workspaceID: run.workspaceID, metadata: ["run": .string(run.id.uuidString)])
+        } catch {
+            present(error)
+        }
     }
 
     func answerQuestion(answer: String? = nil) async {

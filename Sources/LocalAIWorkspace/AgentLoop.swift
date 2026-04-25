@@ -3,6 +3,7 @@ import Foundation
 public protocol AgentRunStore: Sendable {
     func save(_ run: AgentRun) throws
     func run(id: UUID) throws -> AgentRun?
+    func delete(id: UUID) throws
 }
 
 public struct FileAgentRunStore: AgentRunStore {
@@ -23,6 +24,14 @@ public struct FileAgentRunStore: AgentRunStore {
 
     public func run(id: UUID) throws -> AgentRun? {
         try load().first(where: { $0.id == id })
+    }
+
+    public func delete(id: UUID) throws {
+        var runs = try load()
+        runs.removeAll { $0.id == id }
+        try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder.pretty.encode(runs.sorted(by: { $0.updatedAt < $1.updatedAt }))
+        try data.write(to: storageURL, options: .atomic)
     }
 
     public func list() throws -> [AgentRun] {
@@ -51,6 +60,12 @@ public final class InMemoryAgentRunStore: AgentRunStore, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return runs[id]
+    }
+
+    public func delete(id: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        runs.removeValue(forKey: id)
     }
 }
 
