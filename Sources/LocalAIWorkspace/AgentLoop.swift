@@ -420,9 +420,9 @@ private extension JSONValue {
 private func convertToJSONValue(_ value: Any) -> JSONValue {
     switch value {
     case let v as String: return .string(v)
+    case let v as Bool: return .bool(v)
     case let v as Int: return .integer(v)
     case let v as Double: return .number(v)
-    case let v as Bool: return .bool(v)
     case let v as [String: Any]: return .object(v.mapValues(convertToJSONValue))
     case let v as [Any]: return .array(v.map(convertToJSONValue))
     case _ as NSNull: return .null

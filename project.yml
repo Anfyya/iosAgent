@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_NAME: LocalAIWorkspaceApp
         PRODUCT_BUNDLE_IDENTIFIER: com.anfyya.LocalAIWorkspace
-        MARKETING_VERSION: "0.12"
-        CURRENT_PROJECT_VERSION: "12"
+        MARKETING_VERSION: "0.13"
+        CURRENT_PROJECT_VERSION: "13"
         TARGETED_DEVICE_FAMILY: 1
         SUPPORTS_MACCATALYST: NO
         GENERATE_INFOPLIST_FILE: YES
