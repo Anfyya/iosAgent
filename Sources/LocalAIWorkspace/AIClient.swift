@@ -7,7 +7,6 @@ public enum AIClientError: Error, LocalizedError {
     case unsupportedProvider
     case invalidBaseURL(String)
     case missingAPIKeyReference
-    case streamingToolCallsUnsupported
     case server(statusCode: Int, message: String, payload: Data)
 
     public var errorDescription: String? {
@@ -18,8 +17,6 @@ public enum AIClientError: Error, LocalizedError {
             return "The provider base URL is invalid: \(url)"
         case .missingAPIKeyReference:
             return "The provider profile is missing an API key reference."
-        case .streamingToolCallsUnsupported:
-            return "Streaming tool calls are not supported yet."
         case let .server(statusCode, message, _):
             return "Provider request failed with status \(statusCode): \(message)"
         }
@@ -129,10 +126,6 @@ public struct OpenAICompatibleAIClient: AIClient {
     }
 
     public func buildURLRequest(profile: ProviderProfile, apiKey: String?, request: AIRequest) throws -> URLRequest {
-        if request.stream, let tools = request.tools, !tools.isEmpty {
-            throw AIClientError.streamingToolCallsUnsupported
-        }
-
         guard var components = URLComponents(string: profile.baseURL) else {
             throw AIClientError.invalidBaseURL(profile.baseURL)
         }

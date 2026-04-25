@@ -161,6 +161,25 @@ struct ProviderAdapterTests {
         #expect(urlRequest.value(forHTTPHeaderField: "X-Trace") == "trace-1")
     }
 
+    @Test func buildsStreamingURLRequestWithTools() async throws {
+        let profile = makeProviderProfile()
+        let request = AIRequest(
+            messages: [AIMessage(role: "user", content: "use tools")],
+            model: "deepseek-v4-pro",
+            stream: true,
+            toolChoice: "auto",
+            tools: SupportedTools.schemas
+        )
+
+        let urlRequest = try OpenAICompatibleAIClient().buildURLRequest(profile: profile, apiKey: "secret", request: request)
+        let body = try #require(urlRequest.httpBody)
+        let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+
+        #expect(json["stream"] as? Bool == true)
+        #expect((json["tools"] as? [[String: Any]])?.isEmpty == false)
+        #expect(json["tool_choice"] as? String == "auto")
+    }
+
     @Test func parsesUsageToolCallsAndErrorFallbacks() async throws {
         let profile = makeProviderProfile()
         let payload = """
