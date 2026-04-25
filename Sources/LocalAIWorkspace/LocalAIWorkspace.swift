@@ -9,8 +9,8 @@ public enum MVPSampleData {
         status: WorkspaceStatus(
             contextReady: true,
             cachePrefixStable: true,
-            lastAIRunAt: .now,
-            lastSnapshotAt: .now
+            lastAIRunAt: Date(),
+            lastSnapshotAt: Date()
         )
     )
 

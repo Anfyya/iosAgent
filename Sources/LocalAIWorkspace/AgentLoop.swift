@@ -290,7 +290,7 @@ public struct AgentLoop: Sendable {
     }
 
     private func save(_ run: inout AgentRun) throws {
-        run.updatedAt = .now
+        run.updatedAt = Date()
         try runStore.save(run)
     }
 

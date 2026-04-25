@@ -366,7 +366,7 @@ public struct PermissionDecisionRecord: Identifiable, Codable, Hashable, Sendabl
     public var reason: String
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), toolName: String, permission: ToolPermission, reason: String, createdAt: Date = .now) {
+    public init(id: UUID = UUID(), toolName: String, permission: ToolPermission, reason: String, createdAt: Date = Date()) {
         self.id = id
         self.toolName = toolName
         self.permission = permission
@@ -414,8 +414,8 @@ public struct AgentRun: Identifiable, Codable, Hashable, Sendable {
         pendingPermissionDecision: PermissionDecisionRecord? = nil,
         finalAnswer: String? = nil,
         failureReason: String? = nil,
-        createdAt: Date = .now,
-        updatedAt: Date = .now
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
     ) {
         self.id = id
         self.workspaceID = workspaceID
@@ -529,7 +529,7 @@ public struct PatchProposal: Identifiable, Codable, Hashable, Sendable {
     public var errorMessage: String?
     public var snapshotID: UUID?
 
-    public init(id: UUID = UUID(), workspaceID: UUID? = nil, agentRunID: UUID? = nil, title: String, changes: [PatchChange], reason: String, createdAt: Date = .now, status: PatchProposalStatus = .pendingReview, changedFiles: Int? = nil, changedLines: Int? = nil, applyResult: String? = nil, errorMessage: String? = nil, snapshotID: UUID? = nil) {
+    public init(id: UUID = UUID(), workspaceID: UUID? = nil, agentRunID: UUID? = nil, title: String, changes: [PatchChange], reason: String, createdAt: Date = Date(), status: PatchProposalStatus = .pendingReview, changedFiles: Int? = nil, changedLines: Int? = nil, applyResult: String? = nil, errorMessage: String? = nil, snapshotID: UUID? = nil) {
         self.id = id
         self.workspaceID = workspaceID
         self.agentRunID = agentRunID
@@ -556,7 +556,7 @@ public struct SnapshotRecord: Identifiable, Codable, Hashable, Sendable {
     public var patchID: UUID?
     public var snapshotRootPath: String?
 
-    public init(id: UUID = UUID(), workspaceID: UUID? = nil, createdAt: Date = .now, reason: String, fileHashes: [String: String], changedFiles: [String], patchID: UUID? = nil, snapshotRootPath: String? = nil) {
+    public init(id: UUID = UUID(), workspaceID: UUID? = nil, createdAt: Date = Date(), reason: String, fileHashes: [String: String], changedFiles: [String], patchID: UUID? = nil, snapshotRootPath: String? = nil) {
         self.id = id
         self.workspaceID = workspaceID
         self.createdAt = createdAt
@@ -596,7 +596,7 @@ public struct ContextBlock: Identifiable, Codable, Hashable, Sendable {
     public var order: Int
     public var lastUpdated: Date
 
-    public init(id: UUID = UUID(), type: ContextBlockType, stable: Bool, content: String, contentHash: String, tokenCount: Int, order: Int, lastUpdated: Date = .now) {
+    public init(id: UUID = UUID(), type: ContextBlockType, stable: Bool, content: String, contentHash: String, tokenCount: Int, order: Int, lastUpdated: Date = Date()) {
         self.id = id
         self.type = type
         self.stable = stable
@@ -685,7 +685,7 @@ public struct CacheRecord: Identifiable, Codable, Hashable, Sendable {
     public var missReasons: [CacheMissReason]
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), provider: String, model: String, apiStyle: APIStyle, promptTokens: Int, completionTokens: Int, cachedTokens: Int, cacheMissTokens: Int, cacheHitRate: Double, prefixHash: String, repoSnapshotHash: String, toolSchemaHash: String, projectRulesHash: String, fileTreeHash: String, symbolIndexHash: String, staticPrefixTokenCount: Int, dynamicTokenCount: Int, estimatedCost: Double, estimatedSavedCost: Double, latencyMs: Int, timeToFirstTokenMs: Int, cacheStrategy: CacheStrategy, missReasons: [CacheMissReason], createdAt: Date = .now) {
+    public init(id: UUID = UUID(), provider: String, model: String, apiStyle: APIStyle, promptTokens: Int, completionTokens: Int, cachedTokens: Int, cacheMissTokens: Int, cacheHitRate: Double, prefixHash: String, repoSnapshotHash: String, toolSchemaHash: String, projectRulesHash: String, fileTreeHash: String, symbolIndexHash: String, staticPrefixTokenCount: Int, dynamicTokenCount: Int, estimatedCost: Double, estimatedSavedCost: Double, latencyMs: Int, timeToFirstTokenMs: Int, cacheStrategy: CacheStrategy, missReasons: [CacheMissReason], createdAt: Date = Date()) {
         self.id = id
         self.provider = provider
         self.model = model

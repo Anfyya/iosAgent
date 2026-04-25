@@ -47,7 +47,7 @@ public struct WorkspaceManager: Sendable {
             rootPath: files.path,
             mode: mode,
             activeProviderProfileID: activeProviderProfileID,
-            lastOpenedAt: .now,
+            lastOpenedAt: Date(),
             status: WorkspaceStatus(contextReady: false, cachePrefixStable: false)
         )
         try saveWorkspaceMetadata(workspace)
@@ -71,7 +71,7 @@ public struct WorkspaceManager: Sendable {
 
     public func openWorkspace(id: UUID) throws -> Workspace {
         var workspace = try loadWorkspace(id: id)
-        workspace.lastOpenedAt = .now
+        workspace.lastOpenedAt = Date()
         try saveWorkspaceMetadata(workspace)
         return workspace
     }
@@ -79,7 +79,7 @@ public struct WorkspaceManager: Sendable {
     public func renameWorkspace(id: UUID, to newName: String) throws -> Workspace {
         var workspace = try loadWorkspace(id: id)
         workspace.name = newName
-        workspace.lastOpenedAt = .now
+        workspace.lastOpenedAt = Date()
         try saveWorkspaceMetadata(workspace)
         return workspace
     }
@@ -102,7 +102,7 @@ public struct WorkspaceManager: Sendable {
     public func updateActiveProviderProfile(workspaceID: UUID, providerID: String?) throws -> Workspace {
         var workspace = try loadWorkspace(id: workspaceID)
         workspace.activeProviderProfileID = providerID
-        workspace.lastOpenedAt = .now
+        workspace.lastOpenedAt = Date()
         try saveWorkspaceMetadata(workspace)
         return workspace
     }

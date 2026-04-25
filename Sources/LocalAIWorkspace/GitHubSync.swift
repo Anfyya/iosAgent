@@ -242,7 +242,7 @@ public struct GitHubSyncService: Sendable {
         let repository = try await client.getRepository(owner: owner, repo: repo, token: token)
         let reference = tokenReference ?? "github.default"
         try secretStore.save(service: Self.secretService, account: reference, value: token)
-        let config = GitHubRemoteConfig(owner: owner, repo: repo, branch: branch.isEmpty ? repository.defaultBranch : branch, remoteURL: repository.htmlURL, tokenReference: reference, lastCommitSHA: nil, linkedAt: .now, updatedAt: .now)
+        let config = GitHubRemoteConfig(owner: owner, repo: repo, branch: branch.isEmpty ? repository.defaultBranch : branch, remoteURL: repository.htmlURL, tokenReference: reference, lastCommitSHA: nil, linkedAt: Date(), updatedAt: Date())
         try saveRemoteConfig(config, workspaceID: workspaceID)
         return config
     }
@@ -288,7 +288,7 @@ public struct GitHubSyncService: Sendable {
         try await client.updateRef(owner: remote.owner, repo: remote.repo, branch: remote.branch, sha: sha, force: false, token: try token(for: remote))
         var updated = remote
         updated.lastCommitSHA = sha
-        updated.updatedAt = .now
+        updated.updatedAt = Date()
         try saveRemoteConfig(updated, workspaceID: workspaceID)
     }
 

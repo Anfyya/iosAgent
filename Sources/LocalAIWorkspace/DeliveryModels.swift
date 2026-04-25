@@ -51,7 +51,7 @@ public struct GitHubRemoteConfig: Codable, Hashable, Sendable {
     public var linkedAt: Date
     public var updatedAt: Date
 
-    public init(owner: String, repo: String, branch: String, remoteURL: String, tokenReference: String, lastCommitSHA: String? = nil, linkedAt: Date = .now, updatedAt: Date = .now) {
+    public init(owner: String, repo: String, branch: String, remoteURL: String, tokenReference: String, lastCommitSHA: String? = nil, linkedAt: Date = Date(), updatedAt: Date = Date()) {
         self.owner = owner
         self.repo = repo
         self.branch = branch
@@ -273,7 +273,7 @@ public struct AuditLogEntry: Identifiable, Codable, Hashable, Sendable {
     public var metadata: [String: JSONValue]
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), action: String, target: String? = nil, metadata: [String: JSONValue] = [:], createdAt: Date = .now) {
+    public init(id: UUID = UUID(), action: String, target: String? = nil, metadata: [String: JSONValue] = [:], createdAt: Date = Date()) {
         self.id = id
         self.action = action
         self.target = target
