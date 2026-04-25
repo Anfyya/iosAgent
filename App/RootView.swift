@@ -865,7 +865,7 @@ struct RootView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let workspace = model.selectedWorkspace {
+                    if model.selectedWorkspace != nil {
                         GlassPanel {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("GitHub 远端").font(.headline)

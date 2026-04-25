@@ -35,7 +35,11 @@ struct ChatBubble: View {
             if let secondaryText = item.secondaryText, secondaryText.isEmpty == false {
                 Text(secondaryText)
                     .font(.caption)
-                    .foregroundStyle(item.role == .assistant ? .secondary : .white.opacity(0.78))
+                    .foregroundStyle(
+                        item.role == .assistant
+                            ? AnyShapeStyle(.secondary)
+                            : AnyShapeStyle(Color.white.opacity(0.78))
+                    )
                     .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
             }
         }
