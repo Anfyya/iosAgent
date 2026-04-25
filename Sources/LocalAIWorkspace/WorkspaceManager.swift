@@ -110,7 +110,7 @@ public struct WorkspaceManager: Sendable {
     }
 
     public func workspaceFS(for workspace: Workspace) throws -> WorkspaceFS {
-        try WorkspaceFS(rootURL: filesURL(for: workspace.id), isDirectory: true)
+        try WorkspaceFS(rootURL: filesURL(for: workspace.id))
     }
 
     public func workspaceURL(for id: UUID) -> URL {

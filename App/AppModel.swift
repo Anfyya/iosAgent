@@ -555,6 +555,11 @@ final class AppModel: ObservableObject {
             lastErrorMessage = "请先选择模型服务配置。"
             return
         }
+        let onUpdate: @Sendable (AgentRun) -> Void = { [weak self] updatedRun in
+            Task { @MainActor [weak self] in
+                self?.currentRun = updatedRun
+            }
+        }
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: taskText)
             currentContextSnapshot = snapshot
@@ -567,7 +572,8 @@ final class AppModel: ObservableObject {
                     profile: profile,
                     apiKey: try apiKeyForProfile(profile),
                     contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
-                    requestOptions: agentRequestOptions(for: model)
+                    requestOptions: agentRequestOptions(for: model),
+                    onStreamUpdate: onUpdate
                 )
             } else if currentRun == nil || currentRun?.status == .failed || currentRun?.status == .cancelled {
                 let prompt = promptBuilder.build(
@@ -589,7 +595,8 @@ final class AppModel: ObservableObject {
                     userTask: taskText,
                     initialMessages: prompt.messages,
                     contextRequest: makeContextRequest(for: workspace, currentTask: taskText),
-                    requestOptions: agentRequestOptions(for: model)
+                    requestOptions: agentRequestOptions(for: model),
+                    onStreamUpdate: onUpdate
                 )
             } else {
                 return
@@ -633,6 +640,11 @@ final class AppModel: ObservableObject {
         guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
         let answerText = (answer ?? questionAnswer).trimmingCharacters(in: .whitespacesAndNewlines)
         guard answerText.isEmpty == false else { return }
+        let onUpdate: @Sendable (AgentRun) -> Void = { [weak self] updatedRun in
+            Task { @MainActor [weak self] in
+                self?.currentRun = updatedRun
+            }
+        }
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: run.userTask)
             let loop = try makeAgentLoop(for: workspace)
@@ -642,7 +654,8 @@ final class AppModel: ObservableObject {
                 profile: profile,
                 apiKey: try apiKeyForProfile(profile),
                 contextRequest: makeContextRequest(for: workspace, currentTask: run.userTask),
-                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
+                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions(),
+                onStreamUpdate: onUpdate
             )
             questionAnswer = ""
             if let model = activeModel {
@@ -655,6 +668,11 @@ final class AppModel: ObservableObject {
 
     func resumePermission(approved: Bool) async {
         guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
+        let onUpdate: @Sendable (AgentRun) -> Void = { [weak self] updatedRun in
+            Task { @MainActor [weak self] in
+                self?.currentRun = updatedRun
+            }
+        }
         do {
             let snapshot = try buildAndPersistContextSnapshot(for: workspace, currentTask: run.userTask)
             let loop = try makeAgentLoop(for: workspace)
@@ -664,7 +682,8 @@ final class AppModel: ObservableObject {
                 profile: profile,
                 apiKey: try apiKeyForProfile(profile),
                 contextRequest: makeContextRequest(for: workspace, currentTask: run.userTask),
-                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions()
+                requestOptions: activeModel.map(agentRequestOptions(for:)) ?? AgentRequestOptions(),
+                onStreamUpdate: onUpdate
             )
             try log(action: approved ? "permission_approved" : "permission_denied", workspaceID: workspace.id, metadata: ["tool": .string(run.pendingPermissionRequest?.name ?? "unknown")])
             if let model = activeModel {

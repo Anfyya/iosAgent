@@ -26,8 +26,17 @@ public enum AIClientError: Error, LocalizedError {
     }
 }
 
+public enum AIClientStreamEvent: Sendable {
+    case textDelta(String)
+    case reasoningDelta(String)
+    case toolCallDelta(index: Int, id: String?, name: String?, arguments: String)
+    case done(text: String, reasoning: String, usage: AIUsage?)
+    case failed(Error)
+}
+
 public protocol AIClient: Sendable {
     func complete(profile: ProviderProfile, apiKey: String?, request: AIRequest) async throws -> AIResponse
+    func streamComplete(profile: ProviderProfile, apiKey: String?, request: AIRequest) -> AsyncThrowingStream<AIClientStreamEvent, Error>
 }
 
 public struct OpenAICompatibleAIClient: AIClient {
@@ -58,6 +67,65 @@ public struct OpenAICompatibleAIClient: AIClient {
             parsed.usage = AIUsage(latencyMs: latency)
         }
         return parsed
+    }
+
+    public func streamComplete(profile: ProviderProfile, apiKey: String?, request: AIRequest) -> AsyncThrowingStream<AIClientStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    var streamingRequest = request
+                    streamingRequest.stream = true
+                    let urlRequest = try buildURLRequest(profile: profile, apiKey: apiKey, request: streamingRequest)
+                    let (bytes, response) = try await session.bytes(for: urlRequest)
+                    let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    guard (200 ..< 300).contains(statusCode) else {
+                        var errorData = Data()
+                        for try await byte in bytes { errorData.append(byte) }
+                        let message = ProviderPayloadParser.errorMessage(from: errorData, profile: profile) ?? HTTPURLResponse.localizedString(forStatusCode: statusCode)
+                        continuation.finish(throwing: AIClientError.server(statusCode: statusCode, message: message, payload: errorData))
+                        return
+                    }
+                    let startedAt = Date()
+                    var fullText = ""
+                    var fullReasoning = ""
+                    for try await line in bytes.lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.hasPrefix("data: ") {
+                            let jsonStr = String(trimmed.dropFirst(6))
+                            if jsonStr == "[DONE]" { break }
+                            guard let chunkData = jsonStr.data(using: .utf8),
+                                  let chunk = try? JSONSerialization.jsonObject(with: chunkData) as? [String: Any] else { continue }
+                            if let choices = chunk["choices"] as? [[String: Any]], let first = choices.first {
+                                if let delta = first["delta"] as? [String: Any] {
+                                    if let content = delta["content"] as? String, !content.isEmpty {
+                                        fullText += content
+                                        continuation.yield(.textDelta(content))
+                                    }
+                                    if let rc = delta["reasoning_content"] as? String, !rc.isEmpty {
+                                        fullReasoning += rc
+                                        continuation.yield(.reasoningDelta(rc))
+                                    }
+                                    if let toolCalls = delta["tool_calls"] as? [[String: Any]] {
+                                        for tc in toolCalls {
+                                            let idx = tc["index"] as? Int ?? 0
+                                            let id = tc["id"] as? String
+                                            let name = (tc["function"] as? [String: Any])?["name"] as? String
+                                            let args = (tc["function"] as? [String: Any])?["arguments"] as? String ?? ""
+                                            continuation.yield(.toolCallDelta(index: idx, id: id, name: name, arguments: args))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let latency = Int(Date().timeIntervalSince(startedAt) * 1000)
+                    continuation.yield(.done(text: fullText, reasoning: fullReasoning, usage: AIUsage(latencyMs: latency)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     public func buildURLRequest(profile: ProviderProfile, apiKey: String?, request: AIRequest) throws -> URLRequest {
@@ -132,6 +200,15 @@ public struct DefaultAIClient: AIClient {
             return try await openAICompatibleClient.complete(profile: profile, apiKey: apiKey, request: request)
         default:
             throw AIClientError.unsupportedProvider
+        }
+    }
+
+    public func streamComplete(profile: ProviderProfile, apiKey: String?, request: AIRequest) -> AsyncThrowingStream<AIClientStreamEvent, Error> {
+        switch profile.apiStyle {
+        case .openAICompatible:
+            return openAICompatibleClient.streamComplete(profile: profile, apiKey: apiKey, request: request)
+        default:
+            return AsyncThrowingStream { $0.finish(throwing: AIClientError.unsupportedProvider) }
         }
     }
 }

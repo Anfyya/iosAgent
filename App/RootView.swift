@@ -1173,150 +1173,321 @@ struct RootView: View {
 
     private var githubView: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if model.selectedWorkspace != nil {
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("GitHub 远端").font(.headline)
-                                TextField("所有者", text: $model.remoteOwner)
-                                TextField("仓库", text: $model.remoteRepo)
-                                TextField("分支", text: $model.remoteBranch)
-                                SecureField("GitHub 令牌", text: $model.remoteToken)
-                                HStack {
-                                    Button("关联仓库") { Task { await model.linkGitHubRepository() } }
-                                    Button("重新加载") { Task { await model.refreshGitHubData() } }
-                                }
-                                if let remote = model.githubRemoteConfig {
-                                    Text("已关联：\(remote.owner)/\(remote.repo) @ \(remote.branch)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                if let status = model.githubStatusMessage {
-                                    Text(status)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+            List {
+                if model.selectedWorkspace != nil {
+                    if let remote = model.githubRemoteConfig {
+                        Section {
+                            LabeledContent("仓库", value: "\(remote.owner)/\(remote.repo)")
+                            LabeledContent("分支", value: remote.branch)
+                            LabeledContent("远端", value: remote.remoteURL)
+                        } header: {
+                            Text("已关联仓库")
                         }
+                    }
 
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("提交并推送").font(.headline)
-                                TextField("提交信息", text: $model.commitMessage)
-                                Button("预览提交摘要") { Task { await model.previewCommit() } }
-                                Button("提交并推送") {
-                                    Task {
-                                        let isProtectedBranch = GitHubSyncService.protectedBranches.contains(model.remoteBranch)
-                                        await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !isProtectedBranch)
-                                    }
-                                }
-                                Toggle("确认推送到受保护分支", isOn: $pushProtectedBranch)
-                                if let summary = model.commitSummary {
-                                    Text("准备提交 SHA：\(summary.headSHA)").font(.caption)
-                                    ForEach(summary.changedFiles, id: \.path) { file in
-                                        Text("• \(file.path)")
-                                            .font(.caption.monospaced())
-                                    }
-                                    if summary.skippedFiles.isEmpty == false {
-                                        Text("已跳过：\(summary.skippedFiles.map { "\($0.path) (\($0.skippedReason ?? ""))" }.joined(separator: ", "))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
+                    Section {
+                        NavigationLink {
+                            githubRepoConnectView
+                        } label: {
+                            Label(remoteLabel, systemImage: "link")
                         }
+                        NavigationLink {
+                            githubCommitPushView
+                        } label: {
+                            Label("提交并推送", systemImage: "arrow.up.doc")
+                        }
+                        NavigationLink {
+                            githubPullRequestView
+                        } label: {
+                            Label("拉取请求", systemImage: "arrow.triangle.pull")
+                        }
+                    } header: {
+                        Text("操作")
+                    }
 
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("创建拉取请求").font(.headline)
-                                TextField("标题", text: $model.pullRequestTitle)
-                                TextField("Head 分支", text: $model.pullRequestHeadBranch)
-                                TextField("Base 分支", text: $model.pullRequestBaseBranch)
-                                TextField("正文", text: $model.pullRequestBody, axis: .vertical)
-                                Button("创建拉取请求") { Task { await model.createPullRequest() } }
-                            }
+                    Section {
+                        NavigationLink {
+                            githubWorkflowsView
+                        } label: {
+                            Label("工作流", systemImage: "gearshape.2")
                         }
+                        NavigationLink {
+                            githubRunsView
+                        } label: {
+                            Label("CI 运行记录", systemImage: "list.bullet.clipboard")
+                        }
+                    } header: {
+                        Text("CI / 构建")
+                    }
 
-                        if let builds = model.buildConfiguration {
-                            GlassPanel {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("构建按钮 · \(builds.name)").font(.headline)
-                                    ForEach(builds.builds) { build in
-                                        Button(build.name) { Task { await model.dispatchWorkflow(build: build) } }
-                                    }
+                    if let builds = model.buildConfiguration {
+                        Section("快捷构建") {
+                            ForEach(builds.builds) { build in
+                                Button {
+                                    Task { await model.dispatchWorkflow(build: build) }
+                                } label: {
+                                    Label(build.name, systemImage: "play.fill")
                                 }
                             }
                         }
+                    }
 
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("工作流").font(.headline)
-                                TextField("工作流 ID 或文件名", text: $model.selectedWorkflowIdentifier)
-                                TextField("引用分支或标签", text: $model.selectedWorkflowRef)
-                                TextField("输入 JSON", text: $model.workflowInputsText, axis: .vertical)
-                                Text("输入格式必须是 JSON 对象，例如 {\"scheme\":\"App\"}。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Button("触发工作流") { Task { await model.dispatchWorkflow() } }
-                                ForEach(model.githubWorkflows) { workflow in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(workflow.name)
-                                        Text("\(workflow.path) · \(workflow.state)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
+                    if let status = model.githubStatusMessage {
+                        Section {
+                            Text(status).font(.caption).foregroundStyle(.secondary)
                         }
+                    }
+                } else {
+                    ContentUnavailableView("请先选择项目", systemImage: "arrow.triangle.branch")
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("GitHub")
+        }
+    }
 
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("运行 / 任务 / 产物").font(.headline)
-                                ForEach(model.workflowRuns) { run in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(run.name ?? "运行 \(run.id)")
-                                        Text("状态=\(run.status ?? "无") 结论=\(run.conclusion ?? "无") 分支=\(run.headBranch ?? "无")")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                Divider()
-                                ForEach(model.workflowJobs) { job in
-                                    Text("任务：\(job.name) · \(job.status ?? "无") / \(job.conclusion ?? "无")")
-                                        .font(.caption)
-                                }
-                                Divider()
-                                ForEach(model.workflowArtifacts) { artifact in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(artifact.name)
-                                        Text("大小=\(artifact.sizeInBytes) · \(artifact.archiveDownloadURL)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                        Button("下载到本地") {
-                                            Task { await model.downloadArtifact(artifact) }
-                                        }
-                                        .disabled(artifact.expired)
-                                        if let downloadURL = URL(string: artifact.browserDownloadURL ?? artifact.archiveDownloadURL) {
-                                            Link("打开产物下载地址", destination: downloadURL)
-                                                .font(.caption)
-                                        }
-                                        if artifact.expired {
-                                            Text("该产物已过期，无法下载。")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
+    private var remoteLabel: String {
+        if model.githubRemoteConfig != nil { return "仓库设置" }
+        return "关联仓库"
+    }
+
+    private var githubRepoConnectView: some View {
+        Form {
+            Section {
+                TextField("所有者", text: $model.remoteOwner)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("仓库", text: $model.remoteRepo)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("分支", text: $model.remoteBranch)
+                SecureField("GitHub 令牌", text: $model.remoteToken)
+            }
+
+            Section {
+                Button {
+                    Task { await model.linkGitHubRepository() }
+                } label: {
+                    Label("关联仓库", systemImage: "link")
+                }
+                Button {
+                    Task { await model.refreshGitHubData() }
+                } label: {
+                    Label("刷新数据", systemImage: "arrow.clockwise")
+                }
+            }
+        }
+        .navigationTitle("仓库设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var githubCommitPushView: some View {
+        Form {
+            Section {
+                TextField("提交信息", text: $model.commitMessage)
+                Toggle("确认推送到受保护分支", isOn: $pushProtectedBranch)
+            }
+
+            Section {
+                Button {
+                    Task { await model.previewCommit() }
+                } label: {
+                    Label("预览提交", systemImage: "eye")
+                }
+                Button {
+                    Task {
+                        let isProtectedBranch = GitHubSyncService.protectedBranches.contains(model.remoteBranch)
+                        await model.commitAndPush(confirmed: true, secondProtectedBranchConfirmation: pushProtectedBranch || !isProtectedBranch)
+                    }
+                } label: {
+                    Label("提交并推送", systemImage: "arrow.up.doc.fill")
+                }
+            }
+
+            if let summary = model.commitSummary {
+                Section("提交预览") {
+                    Text("SHA: \(summary.headSHA)")
+                        .font(.caption.monospaced())
+                    ForEach(summary.changedFiles, id: \.path) { file in
+                        HStack {
+                            Image(systemName: icon(for: file.path, isDirectory: false))
+                            Text(file.path)
+                                .font(.caption.monospaced())
                         }
-                    } else {
-                        ContentUnavailableView("请先选择项目", systemImage: "arrow.triangle.branch")
+                    }
+                    if !summary.skippedFiles.isEmpty {
+                        Text("已跳过：\(summary.skippedFiles.map(\.path).joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .padding()
             }
-            .navigationTitle("GitHub")
+        }
+        .navigationTitle("提交并推送")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var githubPullRequestView: some View {
+        Form {
+            Section {
+                TextField("标题", text: $model.pullRequestTitle)
+                TextField("源分支 (Head)", text: $model.pullRequestHeadBranch)
+                TextField("目标分支 (Base)", text: $model.pullRequestBaseBranch)
+            }
+
+            Section("正文") {
+                TextEditor(text: $model.pullRequestBody)
+                    .frame(minHeight: 120)
+                    .font(.body)
+            }
+
+            Section {
+                Button {
+                    Task { await model.createPullRequest() }
+                } label: {
+                    Label("创建拉取请求", systemImage: "arrow.triangle.pull")
+                }
+                .disabled(model.pullRequestTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .navigationTitle("拉取请求")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var githubWorkflowsView: some View {
+        Form {
+            Section("触发工作流") {
+                TextField("工作流 ID 或文件名", text: $model.selectedWorkflowIdentifier)
+                TextField("分支", text: $model.selectedWorkflowRef)
+                TextField("参数 JSON", text: $model.workflowInputsText, axis: .vertical)
+                    .font(.caption.monospaced())
+                Button {
+                    Task { await model.dispatchWorkflow() }
+                } label: {
+                    Label("触发", systemImage: "play.fill")
+                }
+            }
+
+            Section("可用工作流") {
+                if model.githubWorkflows.isEmpty {
+                    Text("无工作流").foregroundStyle(.secondary)
+                }
+                ForEach(model.githubWorkflows) { workflow in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(workflow.name).font(.body.weight(.medium))
+                        Text("\(workflow.path) · \(workflow.state)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("工作流")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var githubRunsView: some View {
+        List {
+            Section("运行历史") {
+                if model.workflowRuns.isEmpty {
+                    Text("无运行记录").foregroundStyle(.secondary)
+                }
+                ForEach(model.workflowRuns) { run in
+                    NavigationLink {
+                        githubRunDetailView(run)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(run.name ?? "运行 \(run.id)")
+                                .font(.body.weight(.medium))
+                            HStack(spacing: 8) {
+                                Label(run.status ?? "未知", systemImage: runIcon(for: run.status))
+                                if let conclusion = run.conclusion {
+                                    Text("· \(conclusion)")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(runColor(for: run.conclusion))
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("CI 运行记录")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func githubRunDetailView(_ run: GitHubWorkflowRun) -> some View {
+        let jobs = model.workflowJobs
+        let artifacts = model.workflowArtifacts
+        return List {
+            Section("运行信息") {
+                LabeledContent("名称", value: run.name ?? "-")
+                LabeledContent("状态", value: run.status ?? "-")
+                LabeledContent("结论", value: run.conclusion ?? "-")
+                LabeledContent("分支", value: run.headBranch ?? "-")
+                if let createdAt = run.createdAt {
+                    LabeledContent("创建时间", value: createdAt.formatted())
+                }
+            }
+
+            if !jobs.isEmpty {
+                Section("任务") {
+                    ForEach(jobs) { job in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(job.name).font(.body.weight(.medium))
+                            Text("\(job.status ?? "") · \(job.conclusion ?? "")")
+                                .font(.caption)
+                                .foregroundStyle(runColor(for: job.conclusion))
+                        }
+                    }
+                }
+            }
+
+            if !artifacts.isEmpty {
+                Section("产物") {
+                    ForEach(artifacts) { artifact in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(artifact.name).font(.body.weight(.medium))
+                            Text("\(ByteCountFormatter.string(fromByteCount: Int64(artifact.sizeInBytes), countStyle: .file))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if artifact.expired {
+                                Text("已过期").font(.caption).foregroundStyle(.red)
+                            }
+                            Button {
+                                Task { await model.downloadArtifact(artifact) }
+                            } label: {
+                                Label("下载", systemImage: "arrow.down.circle")
+                            }
+                            .disabled(artifact.expired)
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(run.name ?? "运行详情")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func runIcon(for status: String?) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "in_progress", "running": return "arrow.triangle.circlepath"
+        case "queued", "pending": return "clock.fill"
+        case "failed", "failure": return "xmark.circle.fill"
+        case "cancelled": return "stop.circle.fill"
+        default: return "questionmark.circle"
+        }
+    }
+
+    private func runColor(for conclusion: String?) -> Color {
+        switch conclusion {
+        case "success": return .green
+        case "failure": return .red
+        case "cancelled": return .orange
+        default: return .secondary
         }
     }
 
