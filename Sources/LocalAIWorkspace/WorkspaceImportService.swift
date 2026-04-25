@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Compression)
+import Compression
+#endif
 
 public enum WorkspaceImportError: Error, LocalizedError {
     case invalidSourceURL(URL)
@@ -13,7 +16,7 @@ public enum WorkspaceImportError: Error, LocalizedError {
         case let .invalidDestinationPath(path):
             return "Import destination path is invalid: \(path)."
         case .zipExtractionUnavailable:
-            return "ZIP extraction is unavailable on this platform."
+            return "ZIP extraction is unavailable for this archive. Only stored and deflated entries are supported on iOS."
         case let .zipExtractionFailed(message):
             return "ZIP extraction failed: \(message)"
         }
@@ -251,6 +254,23 @@ public struct WorkspaceImportService: Sendable {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
 
         #if os(macOS) || os(Linux)
+        return try unzipWithSystemTool(sourceURL: sourceURL, tempRoot: tempRoot)
+        #else
+        return try unzipWithSwift(sourceURL: sourceURL, tempRoot: tempRoot)
+        #endif
+    }
+
+    private func listZipEntries(sourceURL: URL) throws -> [String] {
+        #if os(macOS) || os(Linux)
+        return try listZipEntriesWithSystemTool(sourceURL: sourceURL)
+        #else
+        let data = try Data(contentsOf: sourceURL)
+        return try parseCentralDirectory(data).map(\.path)
+        #endif
+    }
+
+    #if os(macOS) || os(Linux)
+    private func unzipWithSystemTool(sourceURL: URL, tempRoot: URL) throws -> URL {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = ["-qq", sourceURL.path, "-d", tempRoot.path]
@@ -263,13 +283,9 @@ public struct WorkspaceImportService: Sendable {
             throw WorkspaceImportError.zipExtractionFailed(String(decoding: data, as: UTF8.self))
         }
         return tempRoot
-        #else
-        throw WorkspaceImportError.zipExtractionUnavailable
-        #endif
     }
 
-    private func listZipEntries(sourceURL: URL) throws -> [String] {
-        #if os(macOS) || os(Linux)
+    private func listZipEntriesWithSystemTool(sourceURL: URL) throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
         process.arguments = ["-Z1", sourceURL.path]
@@ -287,9 +303,131 @@ public struct WorkspaceImportService: Sendable {
         return String(decoding: data, as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init)
+    }
+    #endif
+
+    private func unzipWithSwift(sourceURL: URL, tempRoot: URL) throws -> URL {
+        let data = try Data(contentsOf: sourceURL)
+        let entries = try parseCentralDirectory(data)
+        for entry in entries {
+            guard shouldImport(relativePath: entry.path) else { continue }
+            let sanitized = try sanitizedRelativePath(entry.path)
+            guard entry.isDirectory == false else {
+                try FileManager.default.createDirectory(at: tempRoot.appendingPathComponent(sanitized, isDirectory: true), withIntermediateDirectories: true)
+                continue
+            }
+            let payload = try readPayload(for: entry, from: data)
+            let output = try decodeZipPayload(payload, method: entry.compressionMethod, uncompressedSize: Int(entry.uncompressedSize))
+            let destination = tempRoot.appendingPathComponent(sanitized)
+            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try output.write(to: destination, options: .atomic)
+        }
+        return tempRoot
+    }
+
+    private func parseCentralDirectory(_ data: Data) throws -> [ZipCentralDirectoryEntry] {
+        guard let eocdOffset = findEndOfCentralDirectory(in: data) else {
+            throw WorkspaceImportError.zipExtractionFailed("End of central directory not found.")
+        }
+        let entryCount = Int(data.uint16LE(at: eocdOffset + 10))
+        let centralDirectoryOffset = Int(data.uint32LE(at: eocdOffset + 16))
+        var offset = centralDirectoryOffset
+        var entries: [ZipCentralDirectoryEntry] = []
+
+        for _ in 0 ..< entryCount {
+            guard offset + 46 <= data.count, data.uint32LE(at: offset) == 0x02014B50 else {
+                throw WorkspaceImportError.zipExtractionFailed("Invalid central directory entry.")
+            }
+            let method = data.uint16LE(at: offset + 10)
+            let compressedSize = data.uint32LE(at: offset + 20)
+            let uncompressedSize = data.uint32LE(at: offset + 24)
+            let fileNameLength = Int(data.uint16LE(at: offset + 28))
+            let extraLength = Int(data.uint16LE(at: offset + 30))
+            let commentLength = Int(data.uint16LE(at: offset + 32))
+            let localHeaderOffset = data.uint32LE(at: offset + 42)
+            let nameStart = offset + 46
+            let nameEnd = nameStart + fileNameLength
+            guard nameEnd <= data.count else {
+                throw WorkspaceImportError.zipExtractionFailed("Invalid ZIP file name range.")
+            }
+            let path = String(decoding: data[nameStart ..< nameEnd], as: UTF8.self)
+            entries.append(ZipCentralDirectoryEntry(path: path, compressionMethod: method, compressedSize: compressedSize, uncompressedSize: uncompressedSize, localHeaderOffset: localHeaderOffset, isDirectory: path.hasSuffix("/")))
+            offset = nameEnd + extraLength + commentLength
+        }
+        return entries
+    }
+
+    private func findEndOfCentralDirectory(in data: Data) -> Int? {
+        let signature: UInt32 = 0x06054B50
+        let lowerBound = max(0, data.count - 65_557)
+        guard data.count >= 22 else { return nil }
+        var offset = data.count - 22
+        while offset >= lowerBound {
+            if data.uint32LE(at: offset) == signature { return offset }
+            offset -= 1
+        }
+        return nil
+    }
+
+    private func readPayload(for entry: ZipCentralDirectoryEntry, from data: Data) throws -> Data {
+        let localOffset = Int(entry.localHeaderOffset)
+        guard localOffset + 30 <= data.count, data.uint32LE(at: localOffset) == 0x04034B50 else {
+            throw WorkspaceImportError.zipExtractionFailed("Invalid local file header for \(entry.path).")
+        }
+        let fileNameLength = Int(data.uint16LE(at: localOffset + 26))
+        let extraLength = Int(data.uint16LE(at: localOffset + 28))
+        let dataStart = localOffset + 30 + fileNameLength + extraLength
+        let dataEnd = dataStart + Int(entry.compressedSize)
+        guard dataStart <= data.count, dataEnd <= data.count else {
+            throw WorkspaceImportError.zipExtractionFailed("Invalid ZIP payload range for \(entry.path).")
+        }
+        return data.subdata(in: dataStart ..< dataEnd)
+    }
+
+    private func decodeZipPayload(_ payload: Data, method: UInt16, uncompressedSize: Int) throws -> Data {
+        if method == 0 { return payload }
+        guard method == 8 else {
+            throw WorkspaceImportError.zipExtractionUnavailable
+        }
+        #if canImport(Compression)
+        var output = Data(count: uncompressedSize)
+        let decoded = output.withUnsafeMutableBytes { outputBuffer -> Int in
+            guard let outputBase = outputBuffer.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            return payload.withUnsafeBytes { inputBuffer -> Int in
+                guard let inputBase = inputBuffer.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+                return compression_decode_buffer(outputBase, uncompressedSize, inputBase, payload.count, nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard decoded == uncompressedSize else {
+            throw WorkspaceImportError.zipExtractionFailed("Could not inflate ZIP entry. The archive may use an unsupported deflate stream.")
+        }
+        output.count = decoded
+        return output
         #else
         throw WorkspaceImportError.zipExtractionUnavailable
         #endif
+    }
+}
+
+private struct ZipCentralDirectoryEntry {
+    var path: String
+    var compressionMethod: UInt16
+    var compressedSize: UInt32
+    var uncompressedSize: UInt32
+    var localHeaderOffset: UInt32
+    var isDirectory: Bool
+}
+
+private extension Data {
+    func uint16LE(at offset: Int) -> UInt16 {
+        UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+    }
+
+    func uint32LE(at offset: Int) -> UInt32 {
+        UInt32(self[offset]) |
+            (UInt32(self[offset + 1]) << 8) |
+            (UInt32(self[offset + 2]) << 16) |
+            (UInt32(self[offset + 3]) << 24)
     }
 }
 
