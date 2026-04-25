@@ -4,6 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "LocalAIWorkspace",
+    platforms: [
+        .iOS(.v26)
+    ],
     products: [
         .library(
             name: "LocalAIWorkspace",
