@@ -559,8 +559,8 @@ final class AppModel: ObservableObject {
     func previewCommit() async {
         guard let workspace = selectedWorkspace else { return }
         do {
-            commitSummary = try await githubSyncService.commitWorkspaceChanges(workspaceID: workspace.id, message: commitMessage)
-            githubStatusMessage = "Prepared commit \(commitSummary?.headSHA ?? "") with \(commitSummary?.changedFiles.count ?? 0) files."
+            commitSummary = try await githubSyncService.previewWorkspaceChanges(workspaceID: workspace.id)
+            githubStatusMessage = "Dry-run preview: \(commitSummary?.changedFiles.count ?? 0) eligible file(s), \(commitSummary?.skippedFiles.count ?? 0) skipped. No GitHub commit was created."
         } catch {
             present(error)
         }
