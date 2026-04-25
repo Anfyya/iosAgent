@@ -101,17 +101,19 @@ public struct AgentLoop: Sendable {
         modelID: String,
         systemPrompt: String,
         userTask: String,
+        initialMessages: [AIMessage]? = nil,
         contextRequest: ContextBuildRequest? = nil
     ) async throws -> AgentRun {
+        let messages = initialMessages ?? [
+            AIMessage(role: "system", content: systemPrompt),
+            AIMessage(role: "user", content: userTask)
+        ]
         var run = AgentRun(
             workspaceID: workspaceID,
             providerID: profile.id,
             modelID: modelID,
             userTask: userTask,
-            messages: [
-                AIMessage(role: "system", content: systemPrompt),
-                AIMessage(role: "user", content: userTask)
-            ]
+            messages: messages
         )
         try save(&run)
         return try await continueRun(run: run, profile: profile, apiKey: apiKey, contextRequest: contextRequest)

@@ -782,6 +782,180 @@ struct PatchReviewServiceTests {
     }
 }
 
+struct WorkspaceImportServiceTests {
+    @Test func singleFileImportCopiesIntoWorkspaceFiles() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let source = root.appendingPathComponent("Input.txt")
+        try "hello".data(using: .utf8)?.write(to: source)
+
+        let result = try WorkspaceImportService(workspaceManager: manager).importSingleFile(sourceURL: source, workspaceID: workspace.id, destinationPath: "Docs")
+        let imported = try manager.workspaceFS(for: workspace).readTextFile(path: "Docs/Input.txt")
+
+        #expect(imported.content == "hello")
+        #expect(result.importedCount == 1)
+    }
+
+    @Test func zipSlipIsRejected() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let zipURL = root.appendingPathComponent("danger.zip")
+        try makeZip(at: zipURL, entries: ["../escape.txt": "bad"])
+
+        #expect(throws: WorkspaceImportError.self) {
+            _ = try WorkspaceImportService(workspaceManager: manager).importZip(sourceURL: zipURL, workspaceID: workspace.id)
+        }
+    }
+
+    @Test func zipImportIgnoresMacOSMetadata() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let zipURL = root.appendingPathComponent("project.zip")
+        try makeZip(at: zipURL, entries: [
+            "__MACOSX/._a.txt": "ignore",
+            ".DS_Store": "ignore",
+            "Sources/App.swift": "struct App {}"
+        ])
+
+        _ = try WorkspaceImportService(workspaceManager: manager).importZip(sourceURL: zipURL, workspaceID: workspace.id)
+        let files = try manager.workspaceFS(for: workspace).listFiles().map(\.path)
+
+        #expect(files.contains("Sources/App.swift"))
+        #expect(files.contains(where: { $0.contains("__MACOSX") }) == false)
+        #expect(files.contains(".DS_Store") == false)
+    }
+}
+
+struct GitHubSyncServiceTests {
+    @Test func remoteConfigDoesNotPersistToken() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let secrets = InMemorySecretStore()
+        let client = StubGitHubAPIClient()
+        let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: client)
+
+        _ = try await service.linkRepository(workspaceID: workspace.id, owner: "testorg", repo: "sample-repo", branch: "main", token: "ghs_secret")
+        let remoteData = try Data(contentsOf: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
+        let remoteJSON = String(decoding: remoteData, as: UTF8.self)
+
+        #expect(remoteJSON.contains("ghs_secret") == false)
+        #expect(try secrets.read(service: GitHubSyncService.secretService, account: "github.default") == "ghs_secret")
+    }
+
+    @Test func commitTreeSkipsMobiledevAndBinaryFiles() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let fs = try manager.workspaceFS(for: workspace)
+        try fs.writeTextFile(path: "README.md", content: "hello")
+        try fs.writeTextFile(path: ".mobiledev/builds.json", content: "{}")
+        try Data([0, 1, 2, 3]).write(to: try fs.safeURL(for: "blob.bin"))
+
+        let secrets = InMemorySecretStore()
+        try secrets.save(service: GitHubSyncService.secretService, account: "github.default", value: "token")
+        let client = StubGitHubAPIClient()
+        let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: client)
+        let remote = GitHubRemoteConfig(owner: "testorg", repo: "sample-repo", branch: "feature", remoteURL: "https://github.com/testorg/sample-repo", tokenReference: "github.default")
+        try JSONEncoder.pretty.encode(remote).write(to: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
+
+        let summary = try await service.commitWorkspaceChanges(workspaceID: workspace.id, message: "sync")
+
+        #expect(summary.changedFiles.map(\.path) == ["README.md"])
+        #expect(summary.skippedFiles.contains(where: { $0.path == "blob.bin" }))
+        let createdPaths = await client.createdTreeEntries
+        #expect(createdPaths == ["README.md"])
+    }
+
+    @Test func protectedBranchPushRequiresSecondConfirmation() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let secrets = InMemorySecretStore()
+        try secrets.save(service: GitHubSyncService.secretService, account: "github.default", value: "token")
+        let service = GitHubSyncService(workspaceManager: manager, secretStore: secrets, client: StubGitHubAPIClient())
+        let remote = GitHubRemoteConfig(owner: "testorg", repo: "sample-repo", branch: "main", remoteURL: "https://github.com/testorg/sample-repo", tokenReference: "github.default")
+        try JSONEncoder.pretty.encode(remote).write(to: manager.mobiledevURL(for: workspace.id).appendingPathComponent("github/remote.json"))
+
+        await #expect(throws: GitHubSyncError.self) {
+            _ = try await service.pushWorkspaceToBranch(workspaceID: workspace.id, message: "push", confirmed: true, secondProtectedBranchConfirmation: false)
+        }
+    }
+}
+
+struct BuildConfigLoaderTests {
+    @Test func buildsJsonParsingHonorsPriority() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let high = manager.filesURL(for: workspace.id).appendingPathComponent(".mobiledev/builds.json")
+        try FileManager.default.createDirectory(at: high.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let low = manager.filesURL(for: workspace.id).appendingPathComponent("mobiledev-builds.json")
+        try Data("{\"name\":\"Low\",\"builds\":[]}".utf8).write(to: low)
+        try Data("{\"name\":\"High\",\"builds\":[{\"name\":\"iOS\",\"workflow\":\"build-ios.yml\",\"ref\":\"main\",\"artifact\":\"*.ipa\",\"inputs\":{\"configuration\":\"release\"}}]}".utf8).write(to: high)
+
+        let config = try BuildConfigLoader(workspaceManager: manager).load(workspaceID: workspace.id)
+
+        #expect(config?.name == "High")
+        #expect(config?.builds.first?.workflow == "build-ios.yml")
+    }
+}
+
+struct PromptBuilderTests {
+    @Test func staticPrefixComesBeforeDynamicAndOmitsSecrets() async throws {
+        let fs = try makeWorkspaceFS()
+        try fs.writeTextFile(path: "README.md", content: "hello")
+        let request = ContextBuildRequest(systemPrompt: "system", toolSchemaText: "tools", permissionRules: "rules", projectRules: "project", dependencySummary: "deps", aiMemory: "memory", currentTask: "task", userRequirements: "req")
+        let snapshot = try ContextEngine().buildContext(using: request, workspaceFS: fs)
+        var workspace = Workspace(name: "Repo", rootPath: fs.rootURL.path, mode: .localOnly, status: WorkspaceStatus(contextReady: true, cachePrefixStable: true))
+        workspace.currentBranch = "feature"
+        let provider = makeProviderProfile()
+        let prompt = PromptBuilder().build(snapshot: snapshot, userTask: "fix", toolSchemas: SupportedTools.schemas, permissionRules: "git_push: ask", activeProvider: provider, activeModel: provider.modelProfiles[0], workspace: workspace, additionalUserRequirements: "do not leak api key")
+
+        #expect(prompt.contextMessage.contains("[STATIC PREFIX START]"))
+        #expect(prompt.contextMessage.contains("[DYNAMIC TASK START]"))
+        #expect(prompt.contextMessage.range(of: "[STATIC PREFIX START]")!.lowerBound < prompt.contextMessage.range(of: "[DYNAMIC TASK START]")!.lowerBound)
+        #expect(prompt.contextMessage.contains("list_files"))
+        #expect(prompt.contextMessage.contains("repo map"))
+        #expect(prompt.contextMessage.contains("super-secret") == false)
+    }
+}
+
+struct ProviderProfileImportTests {
+    @Test func importClearsApiKeyReference() async throws {
+        var profile = makeProviderProfile()
+        profile.apiKeyReference = "provider.saved"
+
+        let imported = try ProviderProfile.imported(from: profile.exportedData())
+
+        #expect(imported.apiKeyReference == nil)
+    }
+}
+
+struct SnapshotRestoreTests {
+    @Test func restoreSnapshotRestoresOriginalFile() async throws {
+        let root = makeTemporaryDirectory()
+        let manager = try WorkspaceManager(baseURL: root)
+        let workspace = try manager.createWorkspace(name: "Repo")
+        let fs = try manager.workspaceFS(for: workspace)
+        try fs.writeTextFile(path: "README.md", content: "before\n")
+        let base = try fs.readTextFile(path: "README.md")
+        let proposal = PatchProposal(workspaceID: workspace.id, title: "Update", changes: [PatchChange(path: "README.md", operation: .modify, baseHash: base.hash, diff: "@@ -1 +1 @@\n-before\n+after")], reason: "docs")
+        let patchStore = InMemoryPatchStore()
+        try patchStore.save(proposal)
+        let snapshotStore = FileSnapshotStore(storageURL: manager.mobiledevURL(for: workspace.id).appendingPathComponent("snapshots.json"))
+        let service = PatchReviewService(patchStore: patchStore, workspaceManager: manager, permissionManager: PermissionManager(globalMode: .auto), snapshotStore: snapshotStore)
+
+        let applied = try service.apply(proposalID: proposal.id, confirmedByUser: true)
+        try service.restoreSnapshot(snapshotID: try #require(applied.snapshotID), workspaceID: workspace.id, confirmedByUser: true)
+
+        #expect(try fs.readTextFile(path: "README.md").content == "before\n")
+    }
+}
+
 private func makeWorkspaceFS() throws -> WorkspaceFS {
     try WorkspaceFS(rootURL: makeTemporaryDirectory())
 }
@@ -856,5 +1030,69 @@ private actor StubAIClient: AIClient {
 
     func complete(profile: ProviderProfile, apiKey: String?, request: AIRequest) async throws -> AIResponse {
         return responses.isEmpty ? AIResponse(text: "done") : responses.removeFirst()
+    }
+}
+
+private actor StubGitHubAPIClient: GitHubAPIClient {
+    var createdTreeEntries: [String] = []
+
+    func getRepository(owner: String, repo: String, token: String) async throws -> GitHubRepository {
+        GitHubRepository(id: 1, fullName: "\(owner)/\(repo)", private: false, defaultBranch: "main", htmlURL: "https://github.com/\(owner)/\(repo)")
+    }
+
+    func getBranchRef(owner: String, repo: String, branch: String, token: String) async throws -> GitHubBranchRef {
+        GitHubBranchRef(ref: "refs/heads/\(branch)", sha: "head-sha")
+    }
+
+    func getLatestCommit(owner: String, repo: String, branchOrSHA: String, token: String) async throws -> GitHubCommit {
+        GitHubCommit(sha: "head-sha", url: nil, message: "latest")
+    }
+
+    func getGitCommitTreeSHA(owner: String, repo: String, commitSHA: String, token: String) async throws -> String {
+        "base-tree"
+    }
+
+    func createBlob(owner: String, repo: String, content: Data, isBinary: Bool, token: String) async throws -> String {
+        StableHasher.fnv1a64(data: content)
+    }
+
+    func createTree(owner: String, repo: String, baseTree: String?, entries: [GitTreeEntry], token: String) async throws -> String {
+        createdTreeEntries = entries.map(\.path)
+        return "tree-sha"
+    }
+
+    func createCommit(owner: String, repo: String, message: String, treeSHA: String, parents: [String], token: String) async throws -> GitHubCommit {
+        GitHubCommit(sha: "commit-sha", url: nil, message: message)
+    }
+
+    func updateRef(owner: String, repo: String, branch: String, sha: String, force: Bool, token: String) async throws {}
+
+    func createPullRequest(owner: String, repo: String, title: String, body: String, head: String, base: String, token: String) async throws -> String {
+        "https://github.com/\(owner)/\(repo)/pull/1"
+    }
+
+    func listWorkflows(owner: String, repo: String, token: String) async throws -> [GitHubWorkflow] { [] }
+    func dispatchWorkflow(owner: String, repo: String, workflowIDOrFileName: String, ref: String, inputs: [String : String], token: String) async throws {}
+    func listWorkflowRuns(owner: String, repo: String, branch: String?, token: String) async throws -> [GitHubWorkflowRun] { [] }
+    func getWorkflowRun(owner: String, repo: String, runID: Int, token: String) async throws -> GitHubWorkflowRun { GitHubWorkflowRun(id: runID) }
+    func listJobsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubWorkflowJob] { [] }
+    func listArtifactsForRun(owner: String, repo: String, runID: Int, token: String) async throws -> [GitHubArtifact] { [] }
+}
+
+private func makeZip(at url: URL, entries: [String: String]) throws {
+    let temp = makeTemporaryDirectory()
+    for (path, content) in entries {
+        let fileURL = temp.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(content.utf8).write(to: fileURL, options: .atomic)
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+    process.currentDirectoryURL = temp
+    process.arguments = ["-q", "-r", url.path] + entries.keys.sorted()
+    try process.run()
+    process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        throw NSError(domain: "zip", code: Int(process.terminationStatus))
     }
 }
