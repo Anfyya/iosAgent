@@ -79,7 +79,7 @@ public final class InMemoryPatchStore: PatchStore, @unchecked Sendable {
     }
 }
 
-extension JSONEncoder {
+public extension JSONEncoder {
     static var pretty: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
