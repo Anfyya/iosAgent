@@ -391,6 +391,25 @@ struct ContextAndCacheTests {
 }
 
 struct AgentLoopTests {
+    @Test func stubAIClientStreamsToolCalls() async throws {
+        let client = StubAIClient(responses: [
+            AIResponse(toolCalls: [ToolCall(name: "read_file", arguments: ["path": .string("README.md")])])
+        ])
+        let request = AIRequest(messages: [AIMessage(role: "user", content: "read")], model: "deepseek-v4-pro", stream: true)
+
+        var toolCallEvents: [(index: Int, id: String?, name: String?, arguments: String)] = []
+        for try await event in client.streamComplete(profile: makeProviderProfile(), apiKey: "secret", request: request) {
+            if case let .toolCallDelta(index, id, name, arguments) = event {
+                toolCallEvents.append((index: index, id: id, name: name, arguments: arguments))
+            }
+        }
+
+        #expect(toolCallEvents.count == 1)
+        #expect(toolCallEvents.first?.index == 0)
+        #expect(toolCallEvents.first?.name == "read_file")
+        #expect(toolCallEvents.first?.arguments == #"{"path":"README.md"}"#)
+    }
+
     @Test func readFileToolExecutesAutomatically() async throws {
         let fs = try makeWorkspaceFS()
         try fs.writeTextFile(path: "README.md", content: "hello\n")
@@ -1070,6 +1089,12 @@ private final class StubAIClient: AIClient, @unchecked Sendable {
             }
             if let text = response.text, !text.isEmpty {
                 continuation.yield(.textDelta(text))
+            }
+            for (index, call) in response.toolCalls.enumerated() {
+                let encoder = JSONEncoder()
+                let arguments = (try? encoder.encode(call.arguments))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                continuation.yield(.toolCallDelta(index: index, id: call.externalID, name: call.name, arguments: arguments))
             }
             continuation.yield(.done(text: response.text ?? "", reasoning: response.reasoningContent ?? "", usage: response.usage))
             continuation.finish()
