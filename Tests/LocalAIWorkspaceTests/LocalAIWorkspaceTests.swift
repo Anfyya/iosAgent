@@ -1054,6 +1054,20 @@ private actor StubAIClient: AIClient {
     func complete(profile: ProviderProfile, apiKey: String?, request: AIRequest) async throws -> AIResponse {
         return responses.isEmpty ? AIResponse(text: "done") : responses.removeFirst()
     }
+
+    func streamComplete(profile: ProviderProfile, apiKey: String?, request: AIRequest) -> AsyncThrowingStream<AIClientStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let response = responses.isEmpty ? AIResponse(text: "done") : responses.removeFirst()
+            if let rc = response.reasoningContent, !rc.isEmpty {
+                continuation.yield(.reasoningDelta(rc))
+            }
+            if let text = response.text, !text.isEmpty {
+                continuation.yield(.textDelta(text))
+            }
+            continuation.yield(.done(text: response.text ?? "", reasoning: response.reasoningContent ?? "", usage: response.usage))
+            continuation.finish()
+        }
+    }
 }
 
 private actor StubGitHubAPIClient: GitHubAPIClient {
