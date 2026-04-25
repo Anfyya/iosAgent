@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build-simulator:
+  build-ipa:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -45,23 +45,50 @@ jobs:
       - name: Test package
         run: swift test
 
-      - name: Build simulator
+      - name: Build unsigned device app
         run: |
           xcodebuild \
             -project LocalAIWorkspace.xcodeproj \
             -scheme LocalAIWorkspaceApp \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -configuration Release \
+            -derivedDataPath $RUNNER_TEMP/DerivedData \
             -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace.xcresult \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Upload artifacts
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/LocalAIWorkspaceApp.app"
+          IPA_ROOT="$RUNNER_TEMP/ipa"
+          IPA_PATH="$IPA_ROOT/LocalAIWorkspaceApp-unsigned.ipa"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Expected app bundle was not found: $APP_PATH"
+            find "$RUNNER_TEMP/DerivedData/Build/Products" -maxdepth 3 -name '*.app' -print
+            exit 1
+          fi
+
+          mkdir -p "$IPA_ROOT/Payload"
+          cp -R "$APP_PATH" "$IPA_ROOT/Payload/"
+          (cd "$IPA_ROOT" && ditto -c -k --sequesterRsrc --keepParent Payload "$IPA_PATH")
+          ls -lh "$IPA_PATH"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalAIWorkspaceApp-unsigned-ipa
+          path: ${{ runner.temp }}/ipa/LocalAIWorkspaceApp-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-build-artifacts
+          name: build-diagnostics
           path: |
             ${{ runner.temp }}/LocalAIWorkspace.xcresult
           if-no-files-found: ignore
