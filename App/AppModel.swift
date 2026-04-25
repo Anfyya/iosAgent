@@ -448,10 +448,8 @@ final class AppModel: ObservableObject {
             providerProfiles.append(mutable)
             providerProfiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             try persistProfiles()
-            if appPreferences.selectedProviderID == nil || appPreferences.selectedProviderID == mutable.id {
-                appPreferences.selectedProviderID = mutable.id
-                try persistPreferences()
-            }
+            appPreferences.selectedProviderID = mutable.id
+            try persistPreferences()
             try log(action: "provider_saved", workspaceID: selectedWorkspace?.id, metadata: ["provider": .string(mutable.name)])
         } catch {
             present(error)
@@ -585,7 +583,7 @@ final class AppModel: ObservableObject {
             try log(action: "chat_started", workspaceID: workspace.id, metadata: ["task": .string(taskText)])
             handle(run: run, profile: profile, model: model, snapshot: snapshot)
         } catch {
-            present(error)
+            present(error, context: "对话启动失败")
         }
     }
 
@@ -637,7 +635,7 @@ final class AppModel: ObservableObject {
                 handle(run: updated, profile: profile, model: model, snapshot: snapshot)
             }
         } catch {
-            present(error)
+            present(error, context: "回答发送失败")
         }
     }
 
@@ -659,7 +657,7 @@ final class AppModel: ObservableObject {
                 handle(run: updated, profile: profile, model: model, snapshot: snapshot)
             }
         } catch {
-            present(error)
+            present(error, context: "权限操作失败")
         }
     }
 
@@ -907,6 +905,22 @@ final class AppModel: ObservableObject {
         return try secretStore.read(service: "LocalAIWorkspace.provider", account: reference)
     }
 
+    func readAPIKey(for profile: ProviderProfile) -> String? {
+        guard let reference = profile.apiKeyReference else { return nil }
+        return try? secretStore.read(service: "LocalAIWorkspace.provider", account: reference)
+    }
+
+    func deleteAPIKey(for profile: ProviderProfile) {
+        guard let reference = profile.apiKeyReference else { return }
+        try? secretStore.delete(service: "LocalAIWorkspace.provider", account: reference)
+        var updated = profile
+        updated.apiKeyReference = nil
+        providerProfiles.removeAll { $0.id == updated.id }
+        providerProfiles.append(updated)
+        providerProfiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        try? persistProfiles()
+    }
+
     @discardableResult
     private func updateFileSystem(_ operation: (WorkspaceFS) throws -> Void) -> Bool {
         guard let workspace = selectedWorkspace else { return false }
@@ -1052,9 +1066,17 @@ final class AppModel: ObservableObject {
         auditEntries = try auditStore(for: workspaceID).recent(limit: 100)
     }
 
-    private func present(_ error: Error) {
-        lastErrorMessage = error.localizedDescription
+    private func present(_ error: Error, context: String = "") {
+        let desc = error.localizedDescription
+        let nsError = error as NSError
+        let detail = nsError.domain != "NSCocoaErrorDomain" ? "" : " (code=\(nsError.code))"
+        lastErrorMessage = context.isEmpty ? "\(desc)\(detail)" : "\(context)：\(desc)\(detail)"
     }
+}
+
+private struct RuntimeError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private enum WorkflowInputParseError: LocalizedError {

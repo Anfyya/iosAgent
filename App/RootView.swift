@@ -1308,42 +1308,71 @@ struct RootView: View {
         NavigationStack {
             List {
                 Section("模型") {
-                    Picker(
-                        "当前模型",
-                        selection: Binding(
-                            get: { model.activeProvider?.id ?? "" },
-                            set: { model.assignProvider($0.isEmpty ? nil : $0) }
-                        )
-                    ) {
-                        ForEach(model.providerProfiles) { profile in
-                            Text(profile.name).tag(profile.id)
+                    ForEach(model.providerProfiles) { profile in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(profile.name)
+                                    .font(.body.weight(.medium))
+                                Text(profile.modelProfiles.first?.id ?? "")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if model.activeProvider?.id == profile.id {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            model.assignProvider(profile.id)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button("编辑") {
+                                editingProvider = profile
+                                providerAPIKey = model.readAPIKey(for: profile) ?? ""
+                                showProviderEditor = true
+                            }
+                            .tint(.blue)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("删除", role: .destructive) {
+                                model.deleteProvider(profile, deleteSecret: true)
+                            }
                         }
                     }
 
-                    if let profile = model.activeProvider {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(profile.baseURL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(profile.modelProfiles.first?.id ?? "")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Button("编辑当前模型") {
-                            editingProvider = profile
-                            providerAPIKey = ""
-                            showProviderEditor = true
-                        }
-                        Button("测试当前模型") {
-                            Task { await model.testConnection(profile: profile, apiKey: nil) }
-                        }
-                    }
-
-                    Button("添加自定义模型") {
+                    Button {
                         editingProvider = nil
                         providerAPIKey = ""
                         showProviderEditor = true
+                    } label: {
+                        Label("添加模型", systemImage: "plus")
+                    }
+                }
+
+                if let profile = model.activeProvider {
+                    Section("当前模型信息") {
+                        LabeledContent("名称", value: profile.name)
+                        LabeledContent("地址", value: profile.baseURL)
+                        LabeledContent("模型", value: profile.modelProfiles.first?.id ?? "")
+                        LabeledContent("API Key") {
+                            if model.readAPIKey(for: profile)?.isEmpty == false {
+                                Text("已配置")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Text("未配置")
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        Button("测试连接") {
+                            Task { await model.testConnection(profile: profile, apiKey: nil) }
+                        }
+                        Button("编辑模型") {
+                            editingProvider = profile
+                            providerAPIKey = model.readAPIKey(for: profile) ?? ""
+                            showProviderEditor = true
+                        }
                     }
                 }
 
