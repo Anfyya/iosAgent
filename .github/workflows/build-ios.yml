@@ -2,10 +2,7 @@ name: build-ios
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - copilot/**
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
@@ -13,235 +10,58 @@ permissions:
   contents: read
 
 jobs:
-  swift-package-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show Swift version
-        run: swift --version
-
-      - name: Run swift test
-        run: swift test
-
-  xcodegen-validate:
-    runs-on: macos-26
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Select Xcode 26.4
-        run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate project
-        run: xcodegen generate
-
   build-simulator:
     runs-on: macos-26
-    needs:
-      - swift-package-tests
-      - xcodegen-validate
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Select Xcode 26.4
+      - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
-
-      - name: Show toolchain versions
-        run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          xcrun --sdk iphonesimulator --show-sdk-version
-          xcrun simctl list runtimes || true
-          xcrun simctl list devices available || true
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Patch recursive SwiftUI file tree
+      - name: Patch recursive SwiftUI helper
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("App/RootView.swift")
-          text = path.read_text()
-          old = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {\n"
-          marker = "\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {"
-          if old in text:
-              start = text.index(old)
-              end = text.index(marker, start)
-              body = text[start + len(old):end]
-              replacement = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {\n        AnyView(\n" + body + "        )\n    }"
-              text = text[:start] + replacement + text[end:]
-              path.write_text(text)
+          p = Path('App/RootView.swift')
+          s = p.read_text()
+          a = s.index('    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {')
+          b = s.index('\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {', a)
+          block = s[a:b]
+          block = block.replace('    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {', '    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {')
+          block = block.replace('        VStack(alignment: .leading, spacing: 2) {', '        AnyView(VStack(alignment: .leading, spacing: 2) {', 1)
+          block = block.rstrip()
+          if not block.endswith('\n    }'):
+              raise SystemExit('unexpected nodeView shape')
+          block = block[:-6] + '\n        )\n    }\n'
+          p.write_text(s[:a] + block + s[b:])
           PY
 
       - name: Generate project
         run: xcodegen generate
 
-      - name: Pick simulator destination
-        id: simulator
-        shell: bash
-        run: |
-          # GitHub-hosted runner images can change the installed simulator device names.
-          # Use a generic simulator destination so the build does not depend on an
-          # exact device such as "iPhone 16 Pro" existing on the image.
-          echo "destination=generic/platform=iOS Simulator" >> "$GITHUB_OUTPUT"
+      - name: Test package
+        run: swift test
 
-      - name: Build for iOS Simulator
+      - name: Build simulator
         run: |
           xcodebuild \
             -project LocalAIWorkspace.xcodeproj \
             -scheme LocalAIWorkspaceApp \
             -sdk iphonesimulator \
-            -destination '${{ steps.simulator.outputs.destination }}' \
+            -destination 'generic/platform=iOS Simulator' \
             -configuration Release \
             -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Upload simulator build artifacts
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: simulator-build-artifacts
           path: |
             ${{ runner.temp }}/LocalAIWorkspace.xcresult
-            ~/Library/Developer/Xcode/DerivedData
-          if-no-files-found: ignore
-
-  archive-signed:
-    runs-on: macos-26
-    needs: build-simulator
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Select Xcode 26.4
-        run: sudo xcode-select -s /Applications/Xcode_26.4.app/Contents/Developer
-
-      - name: Detect signing configuration
-        id: signing
-        env:
-          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
-          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
-        run: |
-          if [[ -n "$IOS_CERTIFICATE_P12_BASE64" && -n "$IOS_CERTIFICATE_PASSWORD" && -n "$IOS_PROVISIONING_PROFILE_BASE64" && -n "$IOS_KEYCHAIN_PASSWORD" && -n "$IOS_TEAM_ID" ]]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Signing secrets are missing; skipping signed archive/export."
-          fi
-
-      - name: Install XcodeGen
-        if: steps.signing.outputs.ready == 'true'
-        run: brew install xcodegen
-
-      - name: Patch recursive SwiftUI file tree
-        if: steps.signing.outputs.ready == 'true'
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("App/RootView.swift")
-          text = path.read_text()
-          old = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {\n"
-          marker = "\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {"
-          if old in text:
-              start = text.index(old)
-              end = text.index(marker, start)
-              body = text[start + len(old):end]
-              replacement = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {\n        AnyView(\n" + body + "        )\n    }"
-              text = text[:start] + replacement + text[end:]
-              path.write_text(text)
-          PY
-
-      - name: Generate project
-        if: steps.signing.outputs.ready == 'true'
-        run: xcodegen generate
-
-      - name: Import signing assets
-        if: steps.signing.outputs.ready == 'true'
-        env:
-          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
-        run: |
-          CERT_PATH=$RUNNER_TEMP/certificate.p12
-          PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
-
-          echo "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
-
-          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
-
-      - name: Archive app
-        if: steps.signing.outputs.ready == 'true'
-        env:
-          DEVELOPMENT_TEAM: ${{ secrets.IOS_TEAM_ID }}
-        run: |
-          xcodebuild \
-            -project LocalAIWorkspace.xcodeproj \
-            -scheme LocalAIWorkspaceApp \
-            -configuration Release \
-            -destination generic/platform=iOS \
-            -archivePath $RUNNER_TEMP/LocalAIWorkspace.xcarchive \
-            -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace-archive.xcresult \
-            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
-            archive
-
-      - name: Create export options
-        if: steps.signing.outputs.ready == 'true'
-        env:
-          DEVELOPMENT_TEAM: ${{ secrets.IOS_TEAM_ID }}
-        run: |
-          cat > $RUNNER_TEMP/ExportOptions.plist <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>ad-hoc</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
-            <key>teamID</key>
-            <string>${DEVELOPMENT_TEAM}</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          PLIST
-
-      - name: Export IPA
-        if: steps.signing.outputs.ready == 'true'
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/LocalAIWorkspace.xcarchive \
-            -exportPath $RUNNER_TEMP/export \
-            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist
-
-      - name: Upload signed artifacts
-        if: steps.signing.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: LocalAIWorkspace-signed-artifacts
-          path: |
-            ${{ runner.temp }}/LocalAIWorkspace.xcarchive
-            ${{ runner.temp }}/LocalAIWorkspace-archive.xcresult
-            ${{ runner.temp }}/export
           if-no-files-found: ignore
