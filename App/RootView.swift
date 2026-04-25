@@ -965,17 +965,28 @@ struct RootView: View {
     private func chatBubbleItems(for run: AgentRun) -> [ChatBubbleItem] {
         let isLive = run.status == .running
         var items: [ChatBubbleItem] = []
+        let firstUserMessage = run.userTask
+            .components(separatedBy: "\n---\n")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? run.userTask.trimmingCharacters(in: .whitespacesAndNewlines)
+        if firstUserMessage.isEmpty == false {
+            items.append(ChatBubbleItem(role: .user, text: firstUserMessage, secondaryText: nil))
+        }
 
         for message in run.messages where message.role == "user" || message.role == "assistant" {
             if message.role == "user" {
                 let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { continue }
+                guard !text.isEmpty,
+                      text != firstUserMessage,
+                      isInternalContextMessage(text) == false else { continue }
                 items.append(ChatBubbleItem(role: .user, text: text, secondaryText: nil))
             } else if message.role == "assistant" {
                 let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 let reasoning = message.reasoningContent?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let hasReasoning = reasoning?.isEmpty == false
-                guard text.isEmpty == false || hasReasoning else { continue }
+                guard (text.isEmpty == false || hasReasoning),
+                      isInternalContextMessage(text) == false,
+                      reasoning.map(isInternalContextMessage) != true else { continue }
                 items.append(ChatBubbleItem(
                     role: .assistant,
                     text: text,
@@ -995,6 +1006,13 @@ struct RootView: View {
             items.append(ChatBubbleItem(role: .assistant, text: "执行失败：\(failureReason)", secondaryText: nil, isThinking: false))
         }
         return items
+    }
+
+    private func isInternalContextMessage(_ text: String) -> Bool {
+        text.contains("[STATIC PREFIX START]")
+            || text.contains("[STATIC PREFIX END]")
+            || text.contains("[DYNAMIC TASK START]")
+            || text.contains("[DYNAMIC TASK END]")
     }
 
     private func labelCapsule(title: String) -> some View {
@@ -2101,12 +2119,12 @@ private func convertJSONAny(_ object: Any) -> JSONValue {
     switch object {
     case let value as String:
         return .string(value)
+    case let value as Bool:
+        return .bool(value)
     case let value as Int:
         return .integer(value)
     case let value as Double:
         return .number(value)
-    case let value as Bool:
-        return .bool(value)
     case let value as [String: Any]:
         return .object(value.mapValues(convertJSONAny))
     case let value as [Any]:
@@ -2177,10 +2195,20 @@ private func convertJSONAny(_ object: Any) -> JSONValue {
         guard case let .array(items)? = value else { return [] }
         return items.compactMap { item in
             guard case let .object(obj) = item else { return nil }
-            let path = obj["path"]?.stringDescription ?? ""
-            let op = obj["operation"]?.stringDescription ?? "modify"
+            let path = obj["path"]?.stringDescription
+                ?? obj["file"]?.stringDescription
+                ?? obj["filePath"]?.stringDescription
+                ?? obj["file_path"]?.stringDescription
+                ?? obj["filename"]?.stringDescription
+                ?? ""
+            let op = obj["operation"]?.stringDescription ?? obj["op"]?.stringDescription ?? "modify"
             let diff = obj["diff"]?.stringDescription
             let newContent = obj["newContent"]?.stringDescription
+                ?? obj["new_content"]?.stringDescription
+                ?? obj["content"]?.stringDescription
+                ?? obj["contents"]?.stringDescription
+                ?? obj["text"]?.stringDescription
+                ?? obj["code"]?.stringDescription
             return ParsedPatchChange(path: path, op: op, diff: diff, newContent: newContent)
         }
     }

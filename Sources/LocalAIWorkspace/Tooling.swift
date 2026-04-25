@@ -37,7 +37,23 @@ public enum SupportedTools {
             parameters: [
                 "title": .object(["type": .string("string")]),
                 "reason": .object(["type": .string("string")]),
-                "changes": .object(["type": .string("array")])
+                "changes": .object([
+                    "type": .string("array"),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "path": .object(["type": .string("string")]),
+                            "operation": .object([
+                                "type": .string("string"),
+                                "enum": .array([.string("modify"), .string("create"), .string("delete"), .string("rename")])
+                            ]),
+                            "diff": .object(["type": .string("string")]),
+                            "newPath": .object(["type": .string("string")]),
+                            "newContent": .object(["type": .string("string")])
+                        ]),
+                        "required": .array([.string("path"), .string("operation")])
+                    ])
+                ])
             ],
             required: ["title", "reason", "changes"]
         ),

@@ -38,6 +38,7 @@ public struct PromptBuilder: Sendable {
             "- propose_patch must include a precise title, reason, and concrete file changes.",
             "Patch format:",
             "- Only describe file changes the user explicitly asked for.",
+            "- For create operations, set operation=create, path=<relative path>, and newContent=<full new file content>.",
             "- Use unified diff for modify operations and explicit create/delete/rename metadata when needed.",
             "Ask-question rules:",
             "- Use ask_question whenever scope, target file, desired output, or risky actions are uncertain."

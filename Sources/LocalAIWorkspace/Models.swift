@@ -534,6 +534,85 @@ public struct PatchChange: Codable, Hashable, Sendable {
         self.newPath = newPath
         self.newContent = newContent
     }
+
+    fileprivate enum CodingKeys: String, CodingKey {
+        case path
+        case file
+        case filePath
+        case filePathSnake = "file_path"
+        case filename
+        case operation
+        case op
+        case baseHash
+        case baseHashSnake = "base_hash"
+        case diff
+        case newPath
+        case newPathSnake = "new_path"
+        case destination
+        case to
+        case newContent
+        case newContentSnake = "new_content"
+        case content
+        case contents
+        case text
+        case code
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let decodedPath = try container.decodeFirstString(for: [.path, .file, .filePath, .filePathSnake, .filename]) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.path,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Patch change path is missing")
+            )
+        }
+        path = decodedPath
+        operation = PatchOperation(toolName: try container.decodeFirstString(for: [.operation, .op])) ?? .modify
+        baseHash = try container.decodeFirstString(for: [.baseHash, .baseHashSnake])
+        diff = try container.decodeIfPresent(String.self, forKey: .diff)
+        newPath = try container.decodeFirstString(for: [.newPath, .newPathSnake, .destination, .to])
+        newContent = try container.decodeFirstString(for: [.newContent, .newContentSnake, .content, .contents, .text, .code])
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encode(operation, forKey: .operation)
+        try container.encodeIfPresent(baseHash, forKey: .baseHash)
+        try container.encodeIfPresent(diff, forKey: .diff)
+        try container.encodeIfPresent(newPath, forKey: .newPath)
+        try container.encodeIfPresent(newContent, forKey: .newContent)
+    }
+}
+
+private extension PatchOperation {
+    init?(toolName: String?) {
+        guard let toolName else { return nil }
+        let normalized = toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "modify", "update", "edit", "patch":
+            self = .modify
+        case "create", "add", "new", "create_file":
+            self = .create
+        case "delete", "remove", "rm":
+            self = .delete
+        case "rename", "move", "mv":
+            self = .rename
+        default:
+            return nil
+        }
+    }
+}
+
+private extension KeyedDecodingContainer where Key == PatchChange.CodingKeys {
+    func decodeFirstString(for keys: [Key]) throws -> String? {
+        for key in keys {
+            if let value = try decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
+        }
+        return nil
+    }
 }
 
 public struct PatchProposal: Identifiable, Codable, Hashable, Sendable {

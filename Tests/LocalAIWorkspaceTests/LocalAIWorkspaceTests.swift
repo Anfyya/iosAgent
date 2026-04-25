@@ -529,6 +529,32 @@ struct AgentLoopTests {
         #expect(try patchStore.list(workspaceID: nil).count == 1)
     }
 
+    @Test func patchChangeDecoderAcceptsContentAliases() async throws {
+        let changes = try ToolExecutor.decodePatchChanges(from: .array([
+            .object([
+                "path": .string("hello.py"),
+                "operation": .string("create"),
+                "content": .string("print('hello')\n")
+            ]),
+            .object([
+                "file_path": .string("README.md"),
+                "op": .string("add"),
+                "new_content": .string("# Title\n")
+            ]),
+            .object([
+                "file": .string("script.py"),
+                "operation": .string("create_file"),
+                "code": .string("print('ok')\n")
+            ])
+        ]))
+
+        #expect(changes.map(\.path) == ["hello.py", "README.md", "script.py"])
+        #expect(changes.map(\.operation) == [.create, .create, .create])
+        #expect(changes[0].newContent == "print('hello')\n")
+        #expect(changes[1].newContent == "# Title\n")
+        #expect(changes[2].newContent == "print('ok')\n")
+    }
+
     @Test func maxRoundsStopsLoop() async throws {
         let fs = try makeWorkspaceFS()
         try fs.writeTextFile(path: "README.md", content: "hello\n")
