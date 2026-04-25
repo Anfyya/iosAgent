@@ -9,6 +9,7 @@ public enum GitHubSyncError: Error, LocalizedError {
     case missingToken(String)
     case pushConfirmationRequired
     case protectedBranchRequiresSecondConfirmation(String)
+    case pullRequestRequiresDifferentBranches(String)
     case repositoryRequestFailed(statusCode: Int, message: String)
     case invalidResponse
 
@@ -25,6 +26,8 @@ public enum GitHubSyncError: Error, LocalizedError {
             return "Push requires explicit user confirmation."
         case let .protectedBranchRequiresSecondConfirmation(branch):
             return "Pushing \(branch) requires a second confirmation."
+        case let .pullRequestRequiresDifferentBranches(branch):
+            return "Cannot create a pull request from \(branch) into the same branch. Choose a feature branch first."
         case let .repositoryRequestFailed(statusCode, message):
             return "GitHub request failed with status \(statusCode): \(message)"
         case .invalidResponse:
@@ -151,15 +154,9 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
     }
 
     private func send<Response: Decodable>(path: String, method: String = "GET", queryItems: [URLQueryItem] = [], token: String) async throws -> Response {
-        guard var components = URLComponents(string: "https://api.github.com\(path)") else {
-            throw GitHubSyncError.invalidResponse
-        }
-        if queryItems.isEmpty == false {
-            components.queryItems = queryItems
-        }
-        guard let url = components.url else {
-            throw GitHubSyncError.invalidResponse
-        }
+        guard var components = URLComponents(string: "https://api.github.com\(path)") else { throw GitHubSyncError.invalidResponse }
+        if queryItems.isEmpty == false { components.queryItems = queryItems }
+        guard let url = components.url else { throw GitHubSyncError.invalidResponse }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -170,15 +167,9 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
     }
 
     private func send<Response: Decodable, Body: Encodable>(path: String, method: String = "GET", queryItems: [URLQueryItem] = [], token: String, body: Body? = nil) async throws -> Response {
-        guard var components = URLComponents(string: "https://api.github.com\(path)") else {
-            throw GitHubSyncError.invalidResponse
-        }
-        if queryItems.isEmpty == false {
-            components.queryItems = queryItems
-        }
-        guard let url = components.url else {
-            throw GitHubSyncError.invalidResponse
-        }
+        guard var components = URLComponents(string: "https://api.github.com\(path)") else { throw GitHubSyncError.invalidResponse }
+        if queryItems.isEmpty == false { components.queryItems = queryItems }
+        guard let url = components.url else { throw GitHubSyncError.invalidResponse }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -199,15 +190,8 @@ public struct GitHubClient: GitHubAPIClient, Sendable {
             throw GitHubSyncError.repositoryRequestFailed(statusCode: statusCode, message: message)
         }
         if Response.self == EmptyPayload.self {
-            if data.isEmpty {
-                guard let empty = EmptyPayload() as? Response else {
-                    throw GitHubSyncError.invalidResponse
-                }
-                return empty
-            }
-            if let decoded = try? decoder.decode(EmptyPayload.self, from: data) as? Response {
-                return decoded
-            }
+            guard let empty = EmptyPayload() as? Response else { throw GitHubSyncError.invalidResponse }
+            return empty
         }
         return try decoder.decode(Response.self, from: data)
     }
@@ -217,13 +201,23 @@ public struct GitTreeEntry: Encodable, Hashable, Sendable {
     public var path: String
     public var mode: String
     public var type: String
-    public var sha: String
+    public var sha: String?
 
-    public init(path: String, mode: String = "100644", type: String = "blob", sha: String) {
+    public init(path: String, mode: String = "100644", type: String = "blob", sha: String?) {
         self.path = path
         self.mode = mode
         self.type = type
         self.sha = sha
+    }
+
+    enum CodingKeys: String, CodingKey { case path, mode, type, sha }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(path, forKey: .path)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(type, forKey: .type)
+        if let sha { try container.encode(sha, forKey: .sha) } else { try container.encodeNil(forKey: .sha) }
     }
 }
 
@@ -255,9 +249,7 @@ public struct GitHubSyncService: Sendable {
 
     public func loadRemoteConfig(workspaceID: UUID) throws -> GitHubRemoteConfig {
         let url = remoteConfigURL(for: workspaceID)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw GitHubSyncError.missingRemoteConfig(workspaceID)
-        }
+        guard FileManager.default.fileExists(atPath: url.path) else { throw GitHubSyncError.missingRemoteConfig(workspaceID) }
         return try JSONDecoder().decode(GitHubRemoteConfig.self, from: Data(contentsOf: url))
     }
 
@@ -300,15 +292,25 @@ public struct GitHubSyncService: Sendable {
         try saveRemoteConfig(updated, workspaceID: workspaceID)
     }
 
+    public func previewWorkspaceChanges(workspaceID: UUID, includeBinaryFiles: Bool = false, includeLargeFiles: Bool = false) async throws -> GitHubCommitSummary {
+        let remote = try loadRemoteConfig(workspaceID: workspaceID)
+        let workspace = try workspaceManager.loadWorkspace(id: workspaceID)
+        let fs = try workspaceManager.workspaceFS(for: workspace)
+        let payload = try scanLocalFiles(workspaceFS: fs, includeBinaryFiles: includeBinaryFiles, includeLargeFiles: includeLargeFiles)
+        return GitHubCommitSummary(remote: remote, headSHA: "dry-run", changedFiles: payload.changedFiles, skippedFiles: payload.skippedFiles, warnings: payload.warnings)
+    }
+
     public func commitWorkspaceChanges(workspaceID: UUID, message: String, includeBinaryFiles: Bool = false, includeLargeFiles: Bool = false) async throws -> GitHubCommitSummary {
         let remote = try loadRemoteConfig(workspaceID: workspaceID)
         let token = try token(for: remote)
         let workspace = try workspaceManager.loadWorkspace(id: workspaceID)
         let fs = try workspaceManager.workspaceFS(for: workspace)
         let branchRef = try await client.getBranchRef(owner: remote.owner, repo: remote.repo, branch: remote.branch, token: token)
-        let baseTreeSHA = try await client.getGitCommitTreeSHA(owner: remote.owner, repo: remote.repo, commitSHA: branchRef.sha, token: token)
-        let payload = try await buildTreePayload(workspaceFS: fs, workspaceID: workspaceID, remote: remote, token: token)
-        let treeSHA = try await client.createTree(owner: remote.owner, repo: remote.repo, baseTree: baseTreeSHA, entries: payload.entries, token: token)
+        let payload = try await buildTreePayload(workspaceFS: fs, remote: remote, token: token, includeBinaryFiles: includeBinaryFiles, includeLargeFiles: includeLargeFiles)
+
+        // Local workspace is the source of truth. Creating the tree without a base_tree
+        // makes remote files deleted locally disappear from the new commit as well.
+        let treeSHA = try await client.createTree(owner: remote.owner, repo: remote.repo, baseTree: nil, entries: payload.entries, token: token)
         let commit = try await client.createCommit(owner: remote.owner, repo: remote.repo, message: message, treeSHA: treeSHA, parents: [branchRef.sha], token: token)
         return GitHubCommitSummary(remote: remote, headSHA: commit.sha, changedFiles: payload.changedFiles, skippedFiles: payload.skippedFiles, warnings: payload.warnings)
     }
@@ -325,8 +327,13 @@ public struct GitHubSyncService: Sendable {
     }
 
     public func createPullRequest(workspaceID: UUID, title: String, body: String, head: String, base: String) async throws -> String {
+        let normalizedHead = head.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedHead.isEmpty == false, normalizedBase.isEmpty == false, normalizedHead != normalizedBase else {
+            throw GitHubSyncError.pullRequestRequiresDifferentBranches(normalizedHead.isEmpty ? normalizedBase : normalizedHead)
+        }
         let remote = try loadRemoteConfig(workspaceID: workspaceID)
-        return try await client.createPullRequest(owner: remote.owner, repo: remote.repo, title: title, body: body, head: head, base: base, token: try token(for: remote))
+        return try await client.createPullRequest(owner: remote.owner, repo: remote.repo, title: title, body: body, head: normalizedHead, base: normalizedBase, token: try token(for: remote))
     }
 
     public func listWorkflows(workspaceID: UUID) async throws -> [GitHubWorkflow] {
@@ -360,19 +367,16 @@ public struct GitHubSyncService: Sendable {
     }
 
     public func downloadArtifactMetadata(workspaceID: UUID, artifactID: Int) async throws -> GitHubArtifact {
-        let artifacts = try await listWorkflowRuns(workspaceID: workspaceID)
-        for run in artifacts.prefix(20) {
+        let runs = try await listWorkflowRuns(workspaceID: workspaceID)
+        for run in runs.prefix(20) {
             let runArtifacts = try await listArtifactsForRun(workspaceID: workspaceID, runID: run.id)
-            if let artifact = runArtifacts.first(where: { $0.id == artifactID }) {
-                return artifact
-            }
+            if let artifact = runArtifacts.first(where: { $0.id == artifactID }) { return artifact }
         }
         throw GitHubSyncError.invalidResponse
     }
 
-    private func buildTreePayload(workspaceFS: WorkspaceFS, workspaceID: UUID, remote: GitHubRemoteConfig, token: String) async throws -> (entries: [GitTreeEntry], changedFiles: [GitHubFileSummary], skippedFiles: [GitHubFileSummary], warnings: [String]) {
+    private func scanLocalFiles(workspaceFS: WorkspaceFS, includeBinaryFiles: Bool, includeLargeFiles: Bool) throws -> (changedFiles: [GitHubFileSummary], skippedFiles: [GitHubFileSummary], warnings: [String]) {
         let entries = try workspaceFS.listFiles().sorted(by: { $0.path < $1.path }).filter { !$0.isDirectory && !$0.path.hasPrefix(".mobiledev") }
-        var treeEntries: [GitTreeEntry] = []
         var changedFiles: [GitHubFileSummary] = []
         var skippedFiles: [GitHubFileSummary] = []
         var warnings: [String] = []
@@ -381,23 +385,31 @@ public struct GitHubSyncService: Sendable {
             let url = try workspaceFS.safeURL(for: entry.path, requiresProtectedPathAccess: true)
             let data = try Data(contentsOf: url)
             let isBinary = data.prefix(Self.binaryDetectionPrefixBytes).contains(0)
-            if isBinary {
+            if isBinary && includeBinaryFiles == false {
                 skippedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: true, skippedReason: "Binary files require explicit confirmation."))
                 continue
             }
-            if Int(entry.size) > maximumBlobSizeBytes {
-                skippedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: false, skippedReason: "File exceeds upload size limit."))
+            if Int(entry.size) > maximumBlobSizeBytes && includeLargeFiles == false {
+                skippedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: isBinary, skippedReason: "File exceeds upload size limit."))
                 continue
             }
-            let blobSHA = try await client.createBlob(owner: remote.owner, repo: remote.repo, content: data, isBinary: false, token: token)
-            treeEntries.append(GitTreeEntry(path: entry.path, sha: blobSHA))
-            changedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: false))
+            changedFiles.append(GitHubFileSummary(path: entry.path, size: entry.size, isBinary: isBinary))
         }
+        if changedFiles.isEmpty { warnings.append("No eligible files were included in the GitHub commit payload.") }
+        return (changedFiles, skippedFiles, warnings)
+    }
 
-        if changedFiles.isEmpty {
-            warnings.append("No eligible files were included in the GitHub commit payload.")
+    private func buildTreePayload(workspaceFS: WorkspaceFS, remote: GitHubRemoteConfig, token: String, includeBinaryFiles: Bool, includeLargeFiles: Bool) async throws -> (entries: [GitTreeEntry], changedFiles: [GitHubFileSummary], skippedFiles: [GitHubFileSummary], warnings: [String]) {
+        let local = try scanLocalFiles(workspaceFS: workspaceFS, includeBinaryFiles: includeBinaryFiles, includeLargeFiles: includeLargeFiles)
+        var treeEntries: [GitTreeEntry] = []
+
+        for file in local.changedFiles {
+            let url = try workspaceFS.safeURL(for: file.path, requiresProtectedPathAccess: true)
+            let data = try Data(contentsOf: url)
+            let blobSHA = try await client.createBlob(owner: remote.owner, repo: remote.repo, content: data, isBinary: file.isBinary, token: token)
+            treeEntries.append(GitTreeEntry(path: file.path, sha: blobSHA))
         }
-        return (treeEntries, changedFiles, skippedFiles, warnings)
+        return (treeEntries, local.changedFiles, local.skippedFiles, local.warnings)
     }
 
     private func saveRemoteConfig(_ config: GitHubRemoteConfig, workspaceID: UUID) throws {
@@ -411,12 +423,8 @@ public struct GitHubSyncService: Sendable {
     }
 
     private func token(for remote: GitHubRemoteConfig) throws -> String {
-        guard remote.tokenReference.isEmpty == false else {
-            throw GitHubSyncError.missingTokenReference(remote.tokenReference)
-        }
-        guard let token = try secretStore.read(service: Self.secretService, account: remote.tokenReference) else {
-            throw GitHubSyncError.missingToken(remote.tokenReference)
-        }
+        guard remote.tokenReference.isEmpty == false else { throw GitHubSyncError.missingTokenReference(remote.tokenReference) }
+        guard let token = try secretStore.read(service: Self.secretService, account: remote.tokenReference) else { throw GitHubSyncError.missingToken(remote.tokenReference) }
         return token
     }
 }
