@@ -56,8 +56,9 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          xcrun simctl list runtimes
-          xcrun simctl list devices available
+          xcrun --sdk iphonesimulator --show-sdk-version
+          xcrun simctl list runtimes || true
+          xcrun simctl list devices available || true
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -69,35 +70,17 @@ jobs:
         id: simulator
         shell: bash
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, subprocess
-          preferred = [
-              "iPhone 16 Pro",
-              "iPhone 16",
-              "iPhone 15 Pro",
-              "iPhone 15"
-          ]
-          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"]))
-          selected = None
-          for runtime, devices in data.get("devices", {}).items():
-              if "iOS" not in runtime:
-                  continue
-              for name in preferred:
-                  if any(device.get("name") == name and device.get("isAvailable", False) for device in devices):
-                      selected = f"platform=iOS Simulator,name={name}"
-                      break
-              if selected:
-                  break
-          if not selected:
-              raise SystemExit("No supported iOS simulator device was found.")
-          print(f"destination={selected}")
-          PY
+          # GitHub-hosted runner images can change the installed simulator device names.
+          # Use a generic simulator destination so the build does not depend on an
+          # exact device such as "iPhone 16 Pro" existing on the image.
+          echo "destination=generic/platform=iOS Simulator" >> "$GITHUB_OUTPUT"
 
       - name: Build for iOS Simulator
         run: |
           xcodebuild \
             -project LocalAIWorkspace.xcodeproj \
             -scheme LocalAIWorkspaceApp \
+            -sdk iphonesimulator \
             -destination '${{ steps.simulator.outputs.destination }}' \
             -configuration Release \
             -resultBundlePath $RUNNER_TEMP/LocalAIWorkspace.xcresult \
