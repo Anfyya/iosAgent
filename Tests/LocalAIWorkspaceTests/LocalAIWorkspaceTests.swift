@@ -1299,7 +1299,7 @@ private final class StubWebToolClient: WebToolClient, @unchecked Sendable {
 
     func recordedRequests() -> [RecordedWebRequest] {
         lock.withLock {
-            requests
+            return requests
         }
     }
 }
