@@ -25,6 +25,10 @@ public struct FileAgentRunStore: AgentRunStore {
         try load().first(where: { $0.id == id })
     }
 
+    public func list() throws -> [AgentRun] {
+        try load().sorted(by: { $0.updatedAt > $1.updatedAt })
+    }
+
     private func load() throws -> [AgentRun] {
         guard FileManager.default.fileExists(atPath: storageURL.path) else { return [] }
         return try JSONDecoder().decode([AgentRun].self, from: Data(contentsOf: storageURL))

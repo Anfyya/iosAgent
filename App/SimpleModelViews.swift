@@ -17,18 +17,33 @@ struct ChatBubble: View {
     let item: ChatBubbleItem
 
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 0) {
             if item.role == .assistant {
-                bubble(alignment: .leading, foregroundStyle: .primary, background: AnyShapeStyle(.thinMaterial))
-                Spacer(minLength: 44)
+                bubble(
+                    alignment: .leading,
+                    foregroundStyle: .primary,
+                    background: AnyShapeStyle(.regularMaterial),
+                    borderColor: Color.white.opacity(0.18)
+                )
+                Spacer(minLength: 56)
             } else {
-                Spacer(minLength: 44)
-                bubble(alignment: .trailing, foregroundStyle: .white, background: AnyShapeStyle(.tint))
+                Spacer(minLength: 56)
+                bubble(
+                    alignment: .trailing,
+                    foregroundStyle: .white,
+                    background: AnyShapeStyle(.tint)
+                )
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
-    private func bubble(alignment: HorizontalAlignment, foregroundStyle: Color, background: AnyShapeStyle) -> some View {
+    private func bubble(
+        alignment: HorizontalAlignment,
+        foregroundStyle: Color,
+        background: AnyShapeStyle,
+        borderColor: Color? = nil
+    ) -> some View {
         VStack(alignment: alignment, spacing: 6) {
             Text(item.text.isEmpty ? " " : item.text)
                 .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .trailing)
@@ -45,6 +60,12 @@ struct ChatBubble: View {
         }
         .padding(14)
         .background(background, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            if let borderColor {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: 1)
+            }
+        }
         .foregroundStyle(foregroundStyle)
     }
 }

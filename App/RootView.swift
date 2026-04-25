@@ -1,6 +1,9 @@
 import LocalAIWorkspace
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct RootView: View {
     @ObservedObject var model: AppModel
@@ -21,7 +24,9 @@ struct RootView: View {
     @State private var renamePathValue = ""
     @State private var showFileImporter = false
     @State private var showZipImporter = false
+    @State private var showChatHistorySheet = false
     @State private var pushProtectedBranch = false
+    @FocusState private var isChatComposerFocused: Bool
 
     var body: some View {
         TabView(selection: $model.selectedTab) {
@@ -208,16 +213,24 @@ struct RootView: View {
                         ContentUnavailableView("还没有项目", systemImage: "folder")
                     }
                     ForEach(model.workspaces) { workspace in
-                        NavigationLink(value: workspace.id) {
+                        NavigationLink {
+                            projectDetailView(projectID: workspace.id)
+                        } label: {
                             projectRow(for: workspace)
                         }
-                        .simultaneousGesture(TapGesture().onEnded {
-                            model.selectedWorkspaceID = workspace.id
-                            model.refreshWorkspaceState()
-                        })
+                        .contextMenu {
+                            Button("重命名项目") {
+                                renameWorkspace = workspace
+                                renameWorkspaceName = workspace.name
+                            }
+                            Button("删除项目", role: .destructive) {
+                                pendingDeleteProject = workspace
+                            }
+                        }
                     }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("项目")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -229,134 +242,101 @@ struct RootView: View {
                     }
                 }
             }
-            .navigationDestination(for: UUID.self) { projectID in
-                projectDetailView(projectID: projectID)
-            }
         }
     }
 
     private func projectRow(for workspace: Workspace) -> some View {
-        GlassPanel {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(workspace.name)
-                            .font(.headline)
-                        Text(workspace.rootPath)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if model.selectedWorkspaceID == workspace.id {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                }
-                HStack(spacing: 8) {
-                    if let provider = model.activeProvider {
-                        labelCapsule(title: provider.name)
-                    }
-                    if workspace.id == model.selectedWorkspaceID, let remote = model.githubRemoteConfig {
-                        labelCapsule(title: "\(remote.owner)/\(remote.repo)")
-                    }
-                }
+        HStack(spacing: 12) {
+            Image(systemName: "folder.fill")
+                .font(.title3)
+                .foregroundStyle(.blue)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(workspace.name)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                Text(workspace.rootPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if model.selectedWorkspaceID == workspace.id {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
             }
         }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 
     private func projectDetailView(projectID: UUID) -> some View {
         Group {
             if let project = model.workspaces.first(where: { $0.id == projectID }) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(project.name)
-                                    .font(.title2.bold())
-                                Text(project.rootPath)
-                                    .font(.footnote.monospaced())
-                                    .foregroundStyle(.secondary)
-                                HStack(spacing: 8) {
-                                    if let provider = model.activeProvider {
-                                        labelCapsule(title: provider.name)
-                                    }
-                                    if let remote = model.githubRemoteConfig {
-                                        labelCapsule(title: "\(remote.owner)/\(remote.repo)@\(remote.branch)")
-                                    }
-                                }
-                            }
-                        }
+                List {
+                    Section {
+                        projectOverviewRow(project)
+                    }
 
-                        HStack {
-                            TextField("按路径筛选文件", text: $model.fileSearchQuery)
-                                .textFieldStyle(.roundedBorder)
-                            Button("刷新") { model.refreshWorkspaceState() }
-                        }
-
-                        if let importStatusMessage = model.importStatusMessage {
+                    if let importStatusMessage = model.importStatusMessage {
+                        Section {
                             Text(importStatusMessage)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                    }
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("文件")
-                                .font(.headline)
-                            FileTreeList(entries: model.filteredWorkspaceFiles) { path in
-                                model.requestOpenFile(path)
-                            } onDelete: { path in
-                                model.pendingDeletePath = path
-                            } onRename: { path in
-                                model.pendingRenamePath = path
-                                renamePathValue = path
-                            }
-                            .frame(minHeight: 260)
-                        }
-
-                        editorPanel
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                TextField("搜索内容", text: $model.contentSearchQuery)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("搜索") { model.searchContent() }
-                            }
-                            ForEach(model.contentSearchResults, id: \.self) { match in
-                                Button {
-                                    model.requestOpenFile(match.path)
-                                } label: {
-                                    GlassPanel {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text("\(match.path):\(match.lineNumber)")
-                                                .font(.caption.monospaced())
-                                            Text(match.line)
-                                                .font(.caption)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
+                    Section("文件") {
+                        let roots = buildFileTree(from: model.workspaceFiles)
+                        if roots.isEmpty {
+                            ContentUnavailableView("没有文件", systemImage: "doc")
+                        } else {
+                            fileRows(roots)
                         }
                     }
-                    .padding()
+
+                    Section("工作区") {
+                        Button {
+                            model.selectedTab = .chat
+                        } label: {
+                            Label("打开对话", systemImage: "bubble.left.and.bubble.right")
+                        }
+                        Button {
+                            model.selectedTab = .github
+                            Task { await model.refreshGitHubData() }
+                        } label: {
+                            Label("GitHub 与构建", systemImage: "arrow.triangle.branch")
+                        }
+                    }
                 }
+                .listStyle(.insetGrouped)
                 .navigationTitle(project.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .task(id: projectID) {
                     if model.selectedWorkspaceID != projectID {
                         model.selectedWorkspaceID = projectID
-                        model.refreshWorkspaceState()
                     }
+                    model.refreshWorkspaceState()
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Menu {
-                            Button("新建文件") { showNewFileSheet = true }
-                            Button("新建文件夹") { showNewFolderSheet = true }
+                            Button("新建文件") {
+                                newItemPath = ""
+                                showNewFileSheet = true
+                            }
+                            Button("新建文件夹") {
+                                newFolderPath = ""
+                                showNewFolderSheet = true
+                            }
                         } label: {
                             Image(systemName: "plus")
                         }
                         Menu {
+                            Button("刷新") { model.refreshWorkspaceState() }
                             Button("导入文件") { showFileImporter = true }
                             Button("导入 ZIP") { showZipImporter = true }
                             Button("重命名项目") {
@@ -377,282 +357,459 @@ struct RootView: View {
         }
     }
 
-    private var workspaceView: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let workspace = model.selectedWorkspace {
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(workspace.name)
-                                    .font(.title2.bold())
-                                Text(workspace.rootPath)
-                                    .font(.footnote.monospaced())
-                                    .foregroundStyle(.secondary)
-                                HStack {
-                                    if let provider = model.activeProvider { Text("服务：\(provider.name)") }
-                                    if let remote = model.githubRemoteConfig { Text("GitHub: \(remote.owner)/\(remote.repo)@\(remote.branch)") }
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        HStack {
-                            TextField("按路径筛选文件", text: $model.fileSearchQuery)
-                                .textFieldStyle(.roundedBorder)
-                            Button("导入文件") { showFileImporter = true }
-                            Button("导入 ZIP") { showZipImporter = true }
-                            Button("刷新") { model.refreshWorkspaceState() }
-                        }
-                        if let importStatusMessage = model.importStatusMessage {
-                            Text(importStatusMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("文件树")
-                                .font(.headline)
-                            FileTreeList(entries: model.filteredWorkspaceFiles) { path in
-                                model.requestOpenFile(path)
-                            } onDelete: { path in
-                                model.pendingDeletePath = path
-                            } onRename: { path in
-                                model.pendingRenamePath = path
-                                renamePathValue = path
-                            }
-                            .frame(minHeight: 260)
-                        }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                TextField("新文件路径", text: $newItemPath)
-                                Button("新建文件") {
-                                    model.createFile(at: newItemPath)
-                                    newItemPath = ""
-                                }
-                            }
-                            HStack {
-                                TextField("新文件夹路径", text: $newFolderPath)
-                                Button("新建文件夹") {
-                                    model.createFolder(at: newFolderPath)
-                                    newFolderPath = ""
-                                }
-                            }
-                        }
-
-                        editorPanel
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                TextField("搜索内容", text: $model.contentSearchQuery)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("搜索") { model.searchContent() }
-                            }
-                            ForEach(model.contentSearchResults, id: \.self) { match in
-                                Button {
-                                    model.requestOpenFile(match.path)
-                                } label: {
-                                    GlassPanel {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text("\(match.path):\(match.lineNumber)")
-                                                .font(.caption.monospaced())
-                                            Text(match.line)
-                                                .font(.caption)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    } else {
-                        ContentUnavailableView("没有项目", systemImage: "folder.badge.questionmark")
-                    }
-                }
-                .padding()
+    private func projectOverviewRow(_ project: Workspace) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "shippingbox.fill")
+                    .foregroundStyle(.blue)
+                Text(project.name)
+                    .font(.headline)
+                Spacer()
             }
-            .navigationTitle("项目")
-            .confirmationDialog("删除项目？", isPresented: .constant(model.pendingDeletePath != nil), actions: {
-                Button("删除", role: .destructive) { model.deletePendingPath() }
-                Button("取消", role: .cancel) { model.pendingDeletePath = nil }
-            }, message: {
-                Text(model.pendingDeletePath ?? "")
-            })
-            .sheet(isPresented: .constant(model.pendingRenamePath != nil), onDismiss: { model.pendingRenamePath = nil }) {
-                NavigationStack {
-                    Form { TextField("新路径", text: $renamePathValue) }
-                        .navigationTitle("重命名项目")
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) { Button("取消") { model.pendingRenamePath = nil } }
-                            ToolbarItem(placement: .confirmationAction) { Button("保存") { model.renameSelectedPath(to: renamePathValue) } }
-                        }
+            Text(project.rootPath)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                if let provider = model.activeProvider {
+                    labelCapsule(title: provider.name)
+                }
+                if let remote = model.githubRemoteConfig {
+                    labelCapsule(title: "\(remote.owner)/\(remote.repo)@\(remote.branch)")
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func fileRows(_ nodes: [FileTreeNode]) -> some View {
+        ForEach(nodes) { node in
+            repositoryNodeRow(node)
+        }
+    }
+
+    @ViewBuilder
+    private func repositoryNodeRow(_ node: FileTreeNode) -> some View {
+        if node.isDirectory {
+            NavigationLink {
+                directoryView(node)
+            } label: {
+                repositoryRowContent(node)
+            }
+            .contextMenu {
+                fileContextMenu(for: node)
+            }
+        } else {
+            NavigationLink {
+                fileEditorView(path: node.path)
+            } label: {
+                repositoryRowContent(node)
+            }
+            .contextMenu {
+                Button("打开") { model.requestOpenFile(node.path) }
+                fileContextMenu(for: node)
+            }
+        }
+    }
+
+    private func directoryView(_ node: FileTreeNode) -> some View {
+        List {
+            Section(node.path) {
+                if node.children.isEmpty {
+                    ContentUnavailableView("空文件夹", systemImage: "folder")
+                } else {
+                    fileRows(node.children)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(node.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Button("新建文件") {
+                        newItemPath = node.path + "/"
+                        showNewFileSheet = true
+                    }
+                    Button("新建文件夹") {
+                        newFolderPath = node.path + "/"
+                        showNewFolderSheet = true
+                    }
+                    Button("重命名文件夹") {
+                        model.pendingRenamePath = node.path
+                        renamePathValue = node.path
+                    }
+                    Button("删除文件夹", role: .destructive) {
+                        model.pendingDeletePath = node.path
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
     }
 
-    private var editorPanel: some View {
-        GlassPanel {
-            VStack(alignment: .leading, spacing: 8) {
-                if let path = model.selectedFilePath {
-                    HStack {
-                        Text(path)
-                            .font(.headline)
-                        Spacer()
-                        if model.hasUnsavedChanges {
-                            Text("未保存")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    TextEditor(text: Binding(
-                        get: { model.editorText },
-                        set: {
-                            model.editorText = $0
-                            model.hasUnsavedChanges = true
-                        }
-                    ))
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 260)
-                    HStack {
-                        Button(model.hasUnsavedChanges ? "保存更改" : "已保存") { model.saveSelectedFile() }
-                            .buttonStyle(.borderedProminent)
-                        Button("放弃") {
-                            if let path = model.selectedFilePath { try? model.openFile(path) }
-                        }
-                    }
-                } else {
-                    ContentUnavailableView("未选择文件", systemImage: "doc.text")
+    private func repositoryRowContent(_ node: FileTreeNode) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon(for: node.path, isDirectory: node.isDirectory))
+                .font(.title3)
+                .foregroundStyle(node.isDirectory ? .blue : .secondary)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(node.name)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if node.isDirectory {
+                    Text("\(node.children.count) 项")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if node.size > 0 {
+                    Text(byteCount(node.size))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
+
+            Spacer()
+        }
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func fileContextMenu(for node: FileTreeNode) -> some View {
+        Button("重命名") {
+            model.pendingRenamePath = node.path
+            renamePathValue = node.path
+        }
+        Button("删除", role: .destructive) {
+            model.pendingDeletePath = node.path
+        }
+    }
+
+    private func fileEditorView(path: String) -> some View {
+        VStack(spacing: 0) {
+            if model.selectedFilePath == path {
+                TextEditor(text: Binding(
+                    get: { model.editorText },
+                    set: {
+                        model.editorText = $0
+                        model.hasUnsavedChanges = true
+                    }
+                ))
+                .font(.system(.body, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .systemBackground))
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("文件未打开", systemImage: "doc.text")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(lastPathComponent(path))
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: path) {
+            if model.selectedFilePath != path {
+                model.requestOpenFile(path)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    model.saveSelectedFile()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .disabled(model.selectedFilePath != path || model.hasUnsavedChanges == false)
+
+                Menu {
+                    Button("重命名") {
+                        model.pendingRenamePath = path
+                        renamePathValue = path
+                    }
+                    Button("删除文件", role: .destructive) {
+                        model.pendingDeletePath = path
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack(spacing: 10) {
+                Text(path)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(model.hasUnsavedChanges ? "未保存" : "已保存")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(model.hasUnsavedChanges ? .orange : .secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial)
         }
     }
 
     private var chatView: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            ZStack {
+                Color(uiColor: .systemGroupedBackground)
+                .ignoresSafeArea()
+
                 if model.selectedWorkspace == nil {
-                    Spacer()
-                    ContentUnavailableView("请先选择项目", systemImage: "folder")
-                    Spacer()
+                    VStack {
+                        Spacer()
+                        ContentUnavailableView("请先选择项目", systemImage: "folder")
+                        Spacer()
+                    }
                 } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            if let run = model.currentRun {
-                                ForEach(chatBubbleItems(for: run)) { item in
-                                    ChatBubble(item: item)
-                                }
-                            } else {
-                                GlassPanel {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text("开始新对话")
-                                            .font(.headline)
-                                        Text("选择模型和思考强度后，在底部输入任务。")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                    GeometryReader { geometry in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 18) {
+                                chatStatusStrip
+
+                                if let run = model.currentRun {
+                                    ForEach(chatBubbleItems(for: run)) { item in
+                                        ChatBubble(item: item)
                                     }
+                                } else {
+                                    Spacer(minLength: max(40, geometry.size.height * 0.22))
+                                    ContentUnavailableView("新对话", systemImage: "bubble.left.and.bubble.right")
+                                        .frame(maxWidth: .infinity)
                                 }
-                            }
-                            if let run = model.currentRun, run.status == .running {
-                                Text("模型正在处理…")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let run = model.currentRun,
-                               run.status == .waitingForUser,
-                               let question = run.pendingQuestion?.arguments["question"]?.stringDescription {
-                                GlassPanel {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text("需要你补充信息")
-                                            .font(.headline)
-                                        Text(question)
-                                            .foregroundStyle(.secondary)
-                                    }
+
+                                if let run = model.currentRun, run.status == .running {
+                                    Text("模型正在处理…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 4)
                                 }
-                            }
-                            if let run = model.currentRun,
-                               run.status == .waitingForPermission,
-                               let request = run.pendingPermissionRequest {
-                                GlassPanel {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text("操作确认")
-                                            .font(.headline)
-                                        Text(run.pendingPermissionDecision?.reason ?? "")
-                                            .foregroundStyle(.secondary)
-                                        Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
-                                            .font(.caption.monospaced())
-                                        HStack {
-                                            Button("允许一次") { Task { await model.resumePermission(approved: true) } }
-                                            Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
+                                if let run = model.currentRun,
+                                   run.status == .waitingForUser,
+                                   let question = run.pendingQuestion?.arguments["question"]?.stringDescription {
+                                    GlassPanel {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text("需要你补充信息")
+                                                .font(.headline)
+                                            Text(question)
+                                                .foregroundStyle(.secondary)
                                         }
                                     }
                                 }
-                            }
-                        }
-                        .padding()
-                    }
-                    Divider()
-                    VStack(alignment: .leading, spacing: 10) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                Menu {
-                                    ForEach(model.providerProfiles) { profile in
-                                        Button {
-                                            model.assignProvider(profile.id)
-                                        } label: {
-                                            if model.activeProvider?.id == profile.id {
-                                                Label(profile.name, systemImage: "checkmark")
-                                            } else {
-                                                Text(profile.name)
+                                if let run = model.currentRun,
+                                   run.status == .waitingForPermission,
+                                   let request = run.pendingPermissionRequest {
+                                    GlassPanel {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text("操作确认")
+                                                .font(.headline)
+                                            Text(run.pendingPermissionDecision?.reason ?? "")
+                                                .foregroundStyle(.secondary)
+                                            Text(request.arguments.map { "\($0.key)=\($0.value.stringDescription)" }.sorted().joined(separator: "\n"))
+                                                .font(.caption.monospaced())
+                                            HStack {
+                                                Button("允许一次") { Task { await model.resumePermission(approved: true) } }
+                                                Button("拒绝", role: .destructive) { Task { await model.resumePermission(approved: false) } }
                                             }
                                         }
                                     }
-                                } label: {
-                                    labelCapsule(title: model.activeProvider?.name ?? "选择模型")
                                 }
 
-                                if model.activeModel?.supportsReasoning == true {
-                                    Menu {
-                                        ForEach(ReasoningEffortPreset.allCases) { effort in
-                                            Button {
-                                                model.setReasoningEffort(effort)
-                                            } label: {
-                                                if model.selectedReasoningEffort == effort {
-                                                    Label(effort.title, systemImage: "checkmark")
-                                                } else {
-                                                    Text(effort.title)
-                                                }
-                                            }
-                                        }
-                                    } label: {
-                                        labelCapsule(title: "思考 \(model.selectedReasoningEffort.title)")
-                                    }
-                                }
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 12)
+                            .padding(.bottom, 124)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                dismissChatKeyboard()
                             }
                         }
-
-                        HStack(alignment: .bottom, spacing: 10) {
-                            TextField("输入消息", text: $model.chatInput, axis: .vertical)
-                                .textFieldStyle(.roundedBorder)
-                                .lineLimit(1 ... 6)
-                            Button {
-                                Task { await sendChatInput() }
-                            } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.system(size: 30))
-                            }
-                            .disabled(model.chatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.selectedWorkspace == nil || model.currentRun?.status == .waitingForPermission)
-                        }
+                        .scrollDismissesKeyboard(.interactively)
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-                    .padding(.bottom, 10)
-                    .background(.ultraThinMaterial)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.selectedWorkspace != nil {
+                    chatComposerBar
                 }
             }
             .navigationTitle(model.selectedWorkspace?.name ?? "对话")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        model.startNewChat()
+                        isChatComposerFocused = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    Button {
+                        showChatHistorySheet = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                }
+            }
+            .sheet(isPresented: $showChatHistorySheet) {
+                chatHistorySheet
+            }
         }
+    }
+
+    private var chatStatusStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let project = model.selectedWorkspace {
+                    labelCapsule(title: project.name)
+                }
+                labelCapsule(title: model.activeProvider?.name ?? "未选择模型")
+                if let run = model.currentRun {
+                    labelCapsule(title: agentRunStatusText(run.status))
+                } else {
+                    labelCapsule(title: "新对话")
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private var chatComposerBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if let project = model.selectedWorkspace {
+                        labelCapsule(title: project.name)
+                    }
+
+                    Menu {
+                        ForEach(model.providerProfiles) { profile in
+                            Button {
+                                model.assignProvider(profile.id)
+                            } label: {
+                                if model.activeProvider?.id == profile.id {
+                                    Label(profile.name, systemImage: "checkmark")
+                                } else {
+                                    Text(profile.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        labelCapsule(title: model.activeProvider?.name ?? "选择模型")
+                    }
+
+                    if model.activeModel?.supportsReasoning == true {
+                        Menu {
+                            ForEach(ReasoningEffortPreset.allCases) { effort in
+                                Button {
+                                    model.setReasoningEffort(effort)
+                                } label: {
+                                    if model.selectedReasoningEffort == effort {
+                                        Label(effort.title, systemImage: "checkmark")
+                                    } else {
+                                        Text(effort.title)
+                                    }
+                                }
+                            }
+                        } label: {
+                            labelCapsule(title: "思考 \(model.selectedReasoningEffort.title)")
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("输入消息", text: $model.chatInput, axis: .vertical)
+                    .focused($isChatComposerFocused)
+                    .submitLabel(.send)
+                    .onSubmit {
+                        Task { await sendChatInput() }
+                    }
+                    .lineLimit(1 ... 6)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(Color(uiColor: .secondarySystemBackground))
+                    )
+
+                Button {
+                    Task { await sendChatInput() }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 42, height: 42)
+                        .background(Color.accentColor, in: Circle())
+                }
+                .disabled(chatSendDisabled)
+                .opacity(chatSendDisabled ? 0.45 : 1)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .shadow(color: .black.opacity(0.08), radius: 14, y: -2)
+    }
+
+    private var chatHistorySheet: some View {
+        NavigationStack {
+            List {
+                Section("历史记录") {
+                    if model.chatHistory.isEmpty {
+                        ContentUnavailableView("暂无历史记录", systemImage: "clock")
+                    }
+                    ForEach(model.chatHistory) { run in
+                        Button {
+                            model.selectChatRun(run)
+                            showChatHistorySheet = false
+                        } label: {
+                            chatHistoryRow(run)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("对话历史")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { showChatHistorySheet = false }
+                }
+            }
+        }
+    }
+
+    private func chatHistoryRow(_ run: AgentRun) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(run.userTask.isEmpty ? "未命名对话" : run.userTask)
+                .font(.body.weight(.medium))
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                Text(agentRunStatusText(run.status))
+                Text(run.updatedAt.formatted(date: .abbreviated, time: .shortened))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 
     private func sendChatInput() async {
@@ -667,6 +824,19 @@ struct RootView: View {
         if model.lastErrorMessage == nil {
             model.chatInput = ""
         }
+    }
+
+    private var chatSendDisabled: Bool {
+        model.chatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.selectedWorkspace == nil
+            || model.currentRun?.status == .waitingForPermission
+    }
+
+    private func dismissChatKeyboard() {
+        isChatComposerFocused = false
+#if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
     }
 
     private func chatBubbleItems(for run: AgentRun) -> [ChatBubbleItem] {
@@ -1183,109 +1353,98 @@ private struct SectionHeader: View {
 }
 
 private struct FileTreeNode: Identifiable, Hashable {
-    let id = UUID()
+    var id: String { path }
     let name: String
     let path: String
     let isDirectory: Bool
-    var children: [FileTreeNode] = []
+    let size: Int64
+    var children: [FileTreeNode]
+
+    init(name: String, path: String, isDirectory: Bool, size: Int64 = 0, children: [FileTreeNode] = []) {
+        self.name = name
+        self.path = path
+        self.isDirectory = isDirectory
+        self.size = size
+        self.children = children
+    }
 }
 
-private struct FileTreeList: View {
-    let entries: [WorkspaceFileEntry]
-    let onOpen: (String) -> Void
-    let onDelete: (String) -> Void
-    let onRename: (String) -> Void
-    @State private var expanded: Set<String> = []
+private func buildFileTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {
+    func insert(
+        _ nodes: inout [FileTreeNode],
+        parts: [String],
+        index: Int,
+        currentPath: String,
+        entry: WorkspaceFileEntry
+    ) {
+        guard index < parts.count else { return }
+        let name = parts[index]
+        let nodePath = currentPath.isEmpty ? name : "\(currentPath)/\(name)"
+        let isLeaf = index == parts.count - 1
+        let isDirectory = isLeaf ? entry.isDirectory : true
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(buildTree(from: entries), id: \.id) { node in
-                    nodeView(node, depth: 0)
-                }
-            }
-        }
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Button {
-                    if node.isDirectory {
-                        if expanded.contains(node.path) { expanded.remove(node.path) } else { expanded.insert(node.path) }
-                    } else {
-                        onOpen(node.path)
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: node.isDirectory ? (expanded.contains(node.path) ? "folder.open" : "folder") : icon(for: node.path))
-                        Text(node.name)
-                            .font(.system(.body, design: .monospaced))
-                        Spacer()
-                    }
-                    .padding(.leading, CGFloat(depth) * 14)
-                }
-                .buttonStyle(.plain)
-            }
-            .contextMenu {
-                if node.isDirectory == false {
-                    Button("打开") { onOpen(node.path) }
-                }
-                Button("重命名") { onRename(node.path) }
-                Button("删除", role: .destructive) { onDelete(node.path) }
-            }
-            if node.isDirectory, expanded.contains(node.path) || depth == 0 {
-                ForEach(node.children, id: \.id) { child in
-                    nodeView(child, depth: depth + 1)
-                }
-            }
-        }
-    }
-
-    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {
-        func insert(_ node: inout [FileTreeNode], parts: ArraySlice<String>, fullPath: String, isDirectory: Bool) {
-            guard let head = parts.first else { return }
-            let tail = parts.dropFirst()
-            if let index = node.firstIndex(where: { $0.name == head }) {
-                if tail.isEmpty {
-                    node[index] = FileTreeNode(name: head, path: fullPath, isDirectory: isDirectory, children: node[index].children)
-                } else {
-                    var children = node[index].children
-                    insert(&children, parts: tail, fullPath: fullPath, isDirectory: isDirectory)
-                    node[index].children = children.sorted(by: sortNodes)
-                }
+        if let existingIndex = nodes.firstIndex(where: { $0.path == nodePath }) {
+            if isLeaf {
+                nodes[existingIndex] = FileTreeNode(
+                    name: name,
+                    path: nodePath,
+                    isDirectory: isDirectory,
+                    size: entry.size,
+                    children: nodes[existingIndex].children
+                )
             } else {
-                var newNode = FileTreeNode(name: head, path: tail.isEmpty ? fullPath : parts.joined(separator: "/"), isDirectory: tail.isEmpty ? isDirectory : true)
-                if tail.isEmpty == false {
-                    var children: [FileTreeNode] = []
-                    insert(&children, parts: tail, fullPath: fullPath, isDirectory: isDirectory)
-                    newNode.children = children
-                }
-                node.append(newNode)
-                node.sort(by: sortNodes)
+                insert(
+                    &nodes[existingIndex].children,
+                    parts: parts,
+                    index: index + 1,
+                    currentPath: nodePath,
+                    entry: entry
+                )
+                nodes[existingIndex].children.sort(by: sortFileNodes)
             }
+        } else {
+            var node = FileTreeNode(
+                name: name,
+                path: nodePath,
+                isDirectory: isDirectory,
+                size: isLeaf ? entry.size : 0
+            )
+            if isLeaf == false {
+                insert(&node.children, parts: parts, index: index + 1, currentPath: nodePath, entry: entry)
+            }
+            nodes.append(node)
+            nodes.sort(by: sortFileNodes)
         }
-
-        var nodes: [FileTreeNode] = []
-        for entry in entries.sorted(by: { $0.path < $1.path }) {
-            insert(&nodes, parts: ArraySlice(entry.path.split(separator: "/").map(String.init)), fullPath: entry.path, isDirectory: entry.isDirectory)
-        }
-        return nodes
     }
 
-    private func sortNodes(_ lhs: FileTreeNode, _ rhs: FileTreeNode) -> Bool {
-        if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory && !rhs.isDirectory }
-        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    var roots: [FileTreeNode] = []
+    for entry in entries.sorted(by: { $0.path < $1.path }) {
+        let parts = entry.path.split(separator: "/").map(String.init)
+        insert(&roots, parts: parts, index: 0, currentPath: "", entry: entry)
     }
+    return roots
+}
 
-    private func icon(for path: String) -> String {
-        if path.hasSuffix(".swift") { return "swift" }
-        if path.hasSuffix(".json") { return "curlybraces" }
-        if path.hasSuffix(".md") { return "doc.richtext" }
-        if path.hasSuffix(".yml") || path.hasSuffix(".yaml") { return "gearshape.2" }
-        return "doc.text"
-    }
+private func sortFileNodes(_ lhs: FileTreeNode, _ rhs: FileTreeNode) -> Bool {
+    if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory && !rhs.isDirectory }
+    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+}
+
+private func icon(for path: String, isDirectory: Bool) -> String {
+    if isDirectory { return "folder.fill" }
+    if path.hasSuffix(".swift") { return "swift" }
+    if path.hasSuffix(".json") { return "curlybraces" }
+    if path.hasSuffix(".md") { return "doc.richtext" }
+    if path.hasSuffix(".yml") || path.hasSuffix(".yaml") { return "gearshape.2" }
+    return "doc.text"
+}
+
+private func byteCount(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+}
+
+private func lastPathComponent(_ path: String) -> String {
+    path.split(separator: "/").last.map(String.init) ?? path
 }
 
 private struct ProviderProfileEditorSheet: View {

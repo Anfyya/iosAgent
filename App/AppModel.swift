@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published var cacheHistory: [CacheRecord] = []
     @Published var lastConnectionStatus: String?
     @Published var lastErrorMessage: String?
+    @Published var chatHistory: [AgentRun] = []
     @Published var chatInput = ""
     @Published var selectedReasoningEffort: ReasoningEffortPreset = .high
     @Published var questionAnswer = ""
@@ -207,6 +208,7 @@ final class AppModel: ObservableObject {
             workflowArtifacts = []
             commitSummary = nil
             currentRun = nil
+            chatHistory = []
             auditEntries = []
             buildConfiguration = nil
             lastLoadedWorkspaceID = nil
@@ -228,6 +230,11 @@ final class AppModel: ObservableObject {
             commitSummary = nil
             if currentRun?.workspaceID != current.id {
                 currentRun = nil
+            }
+            chatHistory = try agentRunStore(for: current.id).list()
+            if let run = currentRun,
+               let updatedRun = chatHistory.first(where: { $0.id == run.id }) {
+                currentRun = updatedRun
             }
             if let index = workspaces.firstIndex(where: { $0.id == current.id }) {
                 workspaces[index] = current
@@ -561,6 +568,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func startNewChat() {
+        currentRun = nil
+        chatInput = ""
+        questionAnswer = ""
+    }
+
+    func selectChatRun(_ run: AgentRun) {
+        currentRun = run
+        questionAnswer = ""
+        chatInput = ""
+        selectedTab = .chat
+    }
+
     func answerQuestion() async {
         guard let run = currentRun, let profile = activeProvider, let workspace = selectedWorkspace else { return }
         do {
@@ -771,6 +791,7 @@ final class AppModel: ObservableObject {
             }
             try autoApplyPendingPatches(for: run)
             refreshWorkspaceState()
+            chatHistory = try agentRunStore(for: run.workspaceID).list()
         } catch {
             present(error)
         }
@@ -778,7 +799,7 @@ final class AppModel: ObservableObject {
 
     private func makeAgentLoop(for workspace: Workspace) throws -> AgentLoop {
         let patchStore = patchStore(for: workspace.id)
-        let runStore = FileAgentRunStore(storageURL: workspaceManager.mobiledevURL(for: workspace.id).appendingPathComponent("agent_runs.json"))
+        let runStore = agentRunStore(for: workspace.id)
         let fs = try workspaceManager.workspaceFS(for: workspace)
         let executor = ToolExecutor(workspaceFS: fs, contextEngine: contextEngine, patchStore: patchStore)
         return AgentLoop(client: aiClient, patchStore: patchStore, runStore: runStore, toolExecutor: executor, permissionManager: permissionManager)
@@ -867,6 +888,10 @@ final class AppModel: ObservableObject {
 
     private func cacheStore(for workspaceID: UUID) -> FileCacheRecordStore {
         FileCacheRecordStore(storageURL: workspaceManager.mobiledevURL(for: workspaceID).appendingPathComponent("cache_records.json"))
+    }
+
+    private func agentRunStore(for workspaceID: UUID) -> FileAgentRunStore {
+        FileAgentRunStore(storageURL: workspaceManager.mobiledevURL(for: workspaceID).appendingPathComponent("agent_runs.json"))
     }
 
     private func snapshotStore(for workspaceID: UUID) -> FileSnapshotStore {
