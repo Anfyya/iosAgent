@@ -382,73 +382,79 @@ struct RootView: View {
         .padding(.vertical, 4)
     }
 
-    @ViewBuilder
-    private func fileRows(_ nodes: [FileTreeNode]) -> some View {
-        ForEach(nodes) { node in
-            repositoryNodeRow(node)
-        }
+    private func fileRows(_ nodes: [FileTreeNode]) -> AnyView {
+        AnyView(
+            ForEach(nodes) { node in
+                repositoryNodeRow(node)
+            }
+        )
     }
 
-    @ViewBuilder
-    private func repositoryNodeRow(_ node: FileTreeNode) -> some View {
+    private func repositoryNodeRow(_ node: FileTreeNode) -> AnyView {
         if node.isDirectory {
-            NavigationLink {
-                directoryView(node)
-            } label: {
-                repositoryRowContent(node)
-            }
-            .contextMenu {
-                fileContextMenu(for: node)
-            }
+            return AnyView(
+                NavigationLink {
+                    directoryView(node)
+                } label: {
+                    repositoryRowContent(node)
+                }
+                .contextMenu {
+                    fileContextMenu(for: node)
+                }
+            )
         } else {
-            NavigationLink {
-                fileEditorView(path: node.path)
-            } label: {
-                repositoryRowContent(node)
-            }
-            .contextMenu {
-                Button("打开") { model.requestOpenFile(node.path) }
-                fileContextMenu(for: node)
-            }
+            return AnyView(
+                NavigationLink {
+                    fileEditorView(path: node.path)
+                } label: {
+                    repositoryRowContent(node)
+                }
+                .contextMenu {
+                    Button("打开") { model.requestOpenFile(node.path) }
+                    fileContextMenu(for: node)
+                }
+            )
         }
     }
 
-    private func directoryView(_ node: FileTreeNode) -> some View {
-        List {
-            Section(node.path) {
-                if node.children.isEmpty {
-                    ContentUnavailableView("空文件夹", systemImage: "folder")
-                } else {
-                    fileRows(node.children)
+    private func directoryView(_ node: FileTreeNode) -> AnyView {
+        AnyView(
+            List {
+                Section(node.path) {
+                    if node.children.isEmpty {
+                        ContentUnavailableView("空文件夹", systemImage: "folder")
+                    } else {
+                        fileRows(node.children)
+                    }
                 }
             }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(node.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
-                    Button("新建文件") {
-                        newItemPath = node.path + "/"
-                        showNewFileSheet = true
+            .listStyle(.insetGrouped)
+            .navigationTitle(node.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        Button("新建文件") {
+                            newItemPath = node.path + "/"
+                            showNewFileSheet = true
+                        }
+                        Button("新建文件夹") {
+                            newFolderPath = node.path + "/"
+                            showNewFolderSheet = true
+                        }
+                        Button("重命名文件夹") {
+                            model.pendingRenamePath = node.path
+                            renamePathValue = node.path
+                        }
+                        Button("删除文件夹", role: .destructive) {
+                            model.pendingDeletePath = node.path
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    Button("新建文件夹") {
-                        newFolderPath = node.path + "/"
-                        showNewFolderSheet = true
-                    }
-                    Button("重命名文件夹") {
-                        model.pendingRenamePath = node.path
-                        renamePathValue = node.path
-                    }
-                    Button("删除文件夹", role: .destructive) {
-                        model.pendingDeletePath = node.path
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
                 }
             }
-        }
+        )
     }
 
     private func repositoryRowContent(_ node: FileTreeNode) -> some View {
