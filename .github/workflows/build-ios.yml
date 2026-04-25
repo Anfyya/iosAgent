@@ -63,6 +63,23 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Patch recursive SwiftUI file tree
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("App/RootView.swift")
+          text = path.read_text()
+          old = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {\n"
+          marker = "\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {"
+          if old in text:
+              start = text.index(old)
+              end = text.index(marker, start)
+              body = text[start + len(old):end]
+              replacement = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {\n        AnyView(\n" + body + "        )\n    }"
+              text = text[:start] + replacement + text[end:]
+              path.write_text(text)
+          PY
+
       - name: Generate project
         run: xcodegen generate
 
@@ -126,6 +143,24 @@ jobs:
       - name: Install XcodeGen
         if: steps.signing.outputs.ready == 'true'
         run: brew install xcodegen
+
+      - name: Patch recursive SwiftUI file tree
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("App/RootView.swift")
+          text = path.read_text()
+          old = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> some View {\n"
+          marker = "\n    private func buildTree(from entries: [WorkspaceFileEntry]) -> [FileTreeNode] {"
+          if old in text:
+              start = text.index(old)
+              end = text.index(marker, start)
+              body = text[start + len(old):end]
+              replacement = "    private func nodeView(_ node: FileTreeNode, depth: Int) -> AnyView {\n        AnyView(\n" + body + "        )\n    }"
+              text = text[:start] + replacement + text[end:]
+              path.write_text(text)
+          PY
 
       - name: Generate project
         if: steps.signing.outputs.ready == 'true'
