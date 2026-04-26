@@ -449,6 +449,7 @@ public struct ToolExecutor: Sendable {
             ["result", "results"],
             ["result", "items"],
             ["result", "search_results"],
+            ["result", "search_result"],
             ["data", "results"],
             ["data", "items"],
             ["data", "search_results"],

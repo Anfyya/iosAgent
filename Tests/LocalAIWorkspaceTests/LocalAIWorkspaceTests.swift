@@ -349,6 +349,55 @@ struct WebToolTests {
         #expect(first["position"] == .integer(1))
     }
 
+    @Test func webSearchNormalizesOfficialAliyunSearchResultShape() async throws {
+        let fs = try makeWorkspaceFS()
+        let payload = Data("""
+        {
+          "result": {
+            "search_result": [
+              {
+                "title": "Hangzhou Weather",
+                "link": "https://example.com/weather",
+                "snippet": "Sunny with light wind.",
+                "position": 3,
+                "content": "Hangzhou Weather\\nSunny with light wind."
+              }
+            ]
+          },
+          "usage": {
+            "search_count": 1
+          }
+        }
+        """.utf8)
+        let webClient = StubWebToolClient(response: WebToolHTTPResponse(statusCode: 200, contentType: "application/json", data: payload))
+        let executor = ToolExecutor(
+            workspaceFS: fs,
+            contextEngine: ContextEngine(),
+            webConfiguration: WebToolConfiguration(
+                aliyunOpenSearchHost: "https://search.example.com",
+                aliyunOpenSearchAPIKey: "ali-key"
+            ),
+            webClient: webClient
+        )
+
+        let result = try await executor.execute(ToolCall(name: "web_search", arguments: [
+            "query": .string("Hangzhou weather")
+        ]))
+
+        guard case let .object(object) = result.payload,
+              case let .array(results)? = object["results"],
+              case let .object(first)? = results.first else {
+            throw NSError(domain: "official_aliyun_web_search_result_shape", code: 1)
+        }
+        #expect(object["provider"] == .string("aliyun-opensearch"))
+        #expect(first["title"] == .string("Hangzhou Weather"))
+        #expect(first["url"] == .string("https://example.com/weather"))
+        #expect(first["snippet"] == .string("Sunny with light wind."))
+        #expect(first["source"] == .string(""))
+        #expect(first["publishedAt"] == .string(""))
+        #expect(first["position"] == .integer(1))
+    }
+
     @Test func webFetchRejectsPrivateURLsWithoutCallingWorker() async throws {
         let fs = try makeWorkspaceFS()
         let webClient = StubWebToolClient(response: WebToolHTTPResponse(statusCode: 200, contentType: "application/json", data: Data()))
